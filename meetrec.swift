@@ -313,7 +313,7 @@ try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDire
 let outputURL = recordingsDir.appendingPathComponent("meeting_\(timestamp).mp4")
 
 let version = "0.0.2"
-print("OpenRecorder v\(version) - Screen + Audio Recorder")
+print("OpenRec v\(version) - Screen + Audio Recorder")
 print("Output: \(outputURL.path)")
 print("")
 

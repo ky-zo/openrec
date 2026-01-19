@@ -2,7 +2,7 @@
 set -e
 
 VERSION=$(cat VERSION 2>/dev/null || echo "dev")
-echo "Building OpenRecorder v$VERSION..."
+echo "Building OpenRec v$VERSION..."
 
 swiftc -O \
     -o meetrec \

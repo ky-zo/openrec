@@ -8,7 +8,7 @@
 
 ---
 
-# OpenRecorder
+# OpenRec
 
 A lightweight macOS screen recorder that captures screen, system audio, and microphone. Perfect for recording meetings, tutorials, and presentations.
 
@@ -32,8 +32,8 @@ A lightweight macOS screen recorder that captures screen, system audio, and micr
 
 ```bash
 # Clone the repo
-git clone git@github.com:ky-zo/openrecorder.git
-cd openrecorder
+git clone git@github.com:ky-zo/openrec.git
+cd openrec
 
 # Build
 ./build.sh
