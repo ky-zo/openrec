@@ -305,7 +305,7 @@ let timestamp = dateFormatter.string(from: Date())
 
 // Get the directory where the executable is located
 let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
-let recordingsDir = executableURL.appendingPathComponent("Recordings")
+let recordingsDir = executableURL.appendingPathComponent("recordings")
 
 // Create Recordings directory if it doesn't exist
 try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)

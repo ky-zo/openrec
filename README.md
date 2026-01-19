@@ -1,3 +1,13 @@
+<p align="center">
+  <a href="https://fluar.com">
+    <img src="assets/fluar-logo.png" alt="Fluar" width="150">
+  </a>
+  <br>
+  <em>Sponsored by <a href="https://fluar.com">Fluar.com</a> - Go To Market platform for your startup Data Enrichment</em>
+</p>
+
+---
+
 # OpenRecorder
 
 A lightweight macOS screen recorder that captures screen, system audio, and microphone. Perfect for recording meetings, tutorials, and presentations.
@@ -50,9 +60,9 @@ You may also need to grant microphone access.
 # Press Ctrl+C
 ```
 
-Recordings are saved to the `Recordings/` folder with timestamps:
+Recordings are saved to the `recordings/` folder with timestamps:
 ```
-Recordings/meeting_2024-01-19_143022.mp4
+recordings/meeting_2024-01-19_143022.mp4
 ```
 
 ## Output Format
@@ -64,13 +74,3 @@ Recordings/meeting_2024-01-19_143022.mp4
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-<p align="center">
-  <a href="https://fluar.com">
-    <img src="assets/fluar-logo.png" alt="Fluar" width="150">
-  </a>
-  <br>
-  <em>Sponsored by <a href="https://fluar.com">Fluar.com</a></em>
-</p>
