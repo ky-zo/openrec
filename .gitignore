@@ -1,0 +1,15 @@
+# Compiled binary
+meetrec
+
+# Recordings (keep folder, ignore contents)
+Recordings/*
+!Recordings/.gitkeep
+
+# macOS
+.DS_Store
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
