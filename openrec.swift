@@ -3,45 +3,64 @@ import AVFoundation
 import CoreMedia
 import Darwin
 
-// MARK: - Audio Mixer (combines system audio + mic)
+// MARK: - Disk Space Checker
 
-class AudioMixer {
-    private var systemAudioBuffer: [(CMSampleBuffer, CMTime)] = []
-    private var micAudioBuffer: [(CMSampleBuffer, CMTime)] = []
-    private let lock = NSLock()
+struct DiskSpaceStatus {
+    let availableGB: Double
+    let level: Level
 
-    func addSystemAudio(_ buffer: CMSampleBuffer) {
-        lock.lock()
-        defer { lock.unlock() }
-        let pts = CMSampleBufferGetPresentationTimeStamp(buffer)
-        systemAudioBuffer.append((buffer, pts))
-        // Keep buffer manageable
-        if systemAudioBuffer.count > 100 {
-            systemAudioBuffer.removeFirst()
+    enum Level: String {
+        case safe = "SAFE"
+        case warn = "WARNING"
+        case risk = "RISK"
+
+        var symbol: String {
+            switch self {
+            case .safe: return "[OK]"
+            case .warn: return "[!]"
+            case .risk: return "[X]"
+            }
         }
     }
 
-    func addMicAudio(_ buffer: CMSampleBuffer) {
-        lock.lock()
-        defer { lock.unlock() }
-        let pts = CMSampleBufferGetPresentationTimeStamp(buffer)
-        micAudioBuffer.append((buffer, pts))
-        if micAudioBuffer.count > 100 {
-            micAudioBuffer.removeFirst()
-        }
+    static func check() -> DiskSpaceStatus {
+        let fileManager = FileManager.default
+        do {
+            let attrs = try fileManager.attributesOfFileSystem(forPath: NSHomeDirectory())
+            if let freeSpace = attrs[.systemFreeSize] as? Int64 {
+                let gb = Double(freeSpace) / 1_000_000_000
+                let level: Level
+                if gb >= 10 {
+                    level = .safe
+                } else if gb >= 2 {
+                    level = .warn
+                } else {
+                    level = .risk
+                }
+                return DiskSpaceStatus(availableGB: gb, level: level)
+            }
+        } catch {}
+        return DiskSpaceStatus(availableGB: 0, level: .risk)
     }
 
-    // For simplicity, we'll write system audio directly and mix mic in post if needed
-    // Real-time mixing is complex - this version prioritizes system audio (meeting participants)
-    // and adds mic as a separate track
+    func display() {
+        let formatted = String(format: "%.1f GB", availableGB)
+        print("Disk space: \(formatted) \(level.symbol) \(level.rawValue)")
+        if level == .warn {
+            print("  Consider freeing up space for longer recordings")
+        } else if level == .risk {
+            print("  LOW DISK SPACE - Recording may fail!")
+        }
+    }
 }
 
-// MARK: - Meeting Recorder
+// MARK: - Screen Recorder
 
-class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     private var stream: SCStream?
     private var assetWriter: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
+    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var systemAudioInput: AVAssetWriterInput?
     private var micAudioInput: AVAssetWriterInput?
 
@@ -53,9 +72,6 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
     // State
     private var isRecording = false
     private var sessionStarted = false
-    private var videoStartTime: CMTime?
-    private var audioStartTime: CMTime?
-    private var micStartTime: CMTime?
 
     private let outputURL: URL
 
@@ -65,7 +81,6 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
     }
 
     func start() async throws {
-        // Get available content
         let content = try await SCShareableContent.current
 
         guard let display = content.displays.first else {
@@ -78,16 +93,13 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
         let config = SCStreamConfiguration()
         config.width = Int(display.width)
         config.height = Int(display.height)
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 30) // 30 fps
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
         config.queueDepth = 5
         config.showsCursor = true
-
-        // Enable audio capture
         config.capturesAudio = true
         config.sampleRate = 48000
         config.channelCount = 2
 
-        // Create filter for the display
         let filter = SCContentFilter(display: display, excludingWindows: [])
 
         // Setup asset writer
@@ -98,7 +110,6 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
 
         // Create and start stream
         stream = SCStream(filter: filter, configuration: config, delegate: self)
-
         let streamQueue = DispatchQueue(label: "screen.capture")
         try stream?.addStreamOutput(self, type: .screen, sampleHandlerQueue: streamQueue)
         try stream?.addStreamOutput(self, type: .audio, sampleHandlerQueue: streamQueue)
@@ -113,7 +124,6 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
     }
 
     private func setupAssetWriter(width: Int, height: Int) throws {
-        // Remove existing file if present
         try? FileManager.default.removeItem(at: outputURL)
 
         assetWriter = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
@@ -134,6 +144,12 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
 
         if let videoInput = videoInput, assetWriter?.canAdd(videoInput) == true {
             assetWriter?.add(videoInput)
+
+            // Use pixel buffer adaptor for ScreenCaptureKit compatibility
+            pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+                assetWriterInput: videoInput,
+                sourcePixelBufferAttributes: nil
+            )
         }
 
         // System audio input
@@ -164,7 +180,7 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
         micCaptureSession = AVCaptureSession()
 
         guard let micDevice = AVCaptureDevice.default(for: .audio) else {
-            print("Warning: No microphone found, recording without mic")
+            print("Note: No microphone found, recording without mic")
             return
         }
 
@@ -201,13 +217,95 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
             await assetWriter?.finishWriting()
 
             if assetWriter?.status == .completed {
-                print("Recording saved to: \(outputURL.path)")
+                let size = fileSize(at: outputURL)
+                print("Recording saved: \(outputURL.path)")
+                print("Size: \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))")
+
+                // Merge audio tracks if ffmpeg is available
+                mergeAudioTracks(at: outputURL)
             } else if let error = assetWriter?.error {
-                print("Error saving recording: \(error)")
+                print("Error saving: \(error.localizedDescription)")
             }
 
-            // Signal that we're done
             exit(0)
+        }
+    }
+
+    private func fileSize(at url: URL) -> Int64 {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return attrs?[.size] as? Int64 ?? 0
+    }
+
+    private func mergeAudioTracks(at url: URL) {
+        // Check if ffmpeg is available
+        guard shellRun("which ffmpeg >/dev/null 2>&1") else {
+            print("Note: Install ffmpeg to auto-merge mic audio (brew install ffmpeg)")
+            return
+        }
+
+        // Check if file has 2 audio tracks using ffprobe
+        let probeCmd = "ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 '\(url.path)' 2>/dev/null | wc -l"
+        let trackCount = Int(shellOutput(probeCmd).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        guard trackCount >= 2 else {
+            return // Only one audio track, no merge needed
+        }
+
+        print("Merging audio tracks...")
+
+        let tempPath = url.deletingLastPathComponent().appendingPathComponent("temp_merged.mp4").path
+
+        // ffmpeg command to mix both audio tracks
+        let mergeCmd = """
+            ffmpeg -y -i '\(url.path)' \
+            -filter_complex '[0:a:0][0:a:1]amix=inputs=2:duration=longest[aout]' \
+            -map 0:v -map '[aout]' \
+            -c:v copy -c:a aac -b:a 192k \
+            '\(tempPath)' </dev/null >/dev/null 2>&1
+            """
+
+        if shellRun(mergeCmd) {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.moveItem(atPath: tempPath, toPath: url.path)
+            let newSize = fileSize(at: url)
+            print("Audio merged! Final size: \(ByteCountFormatter.string(fromByteCount: newSize, countStyle: .file))")
+        } else {
+            try? FileManager.default.removeItem(atPath: tempPath)
+        }
+    }
+
+    private func shellRun(_ command: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", command]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func shellOutput(_ command: String) -> String {
+        let process = Process()
+        let pipe = Pipe()
+
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", command]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return String(data: data, encoding: .utf8) ?? ""
+        } catch {
+            return ""
         }
     }
 
@@ -222,24 +320,27 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
         case .audio:
             handleSystemAudioSample(sampleBuffer)
         case .microphone:
-            break // We handle mic separately via AVCaptureSession
+            break
         @unknown default:
             break
         }
     }
 
     private func handleVideoSample(_ sampleBuffer: CMSampleBuffer) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            return
+        }
+
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
         if !sessionStarted {
             assetWriter?.startWriting()
             assetWriter?.startSession(atSourceTime: pts)
             sessionStarted = true
-            videoStartTime = pts
         }
 
         if videoInput?.isReadyForMoreMediaData == true {
-            videoInput?.append(sampleBuffer)
+            pixelBufferAdaptor?.append(pixelBuffer, withPresentationTime: pts)
         }
     }
 
@@ -264,7 +365,12 @@ class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudi
     // MARK: - SCStreamDelegate
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        print("Stream stopped with error: \(error)")
+        let nsError = error as NSError
+        if nsError.code == -3817 {
+            print("\nScreen sharing stopped by user")
+        } else {
+            print("\nStream stopped: \(error.localizedDescription)")
+        }
         stop()
     }
 }
@@ -287,9 +393,8 @@ enum RecorderError: Error, CustomStringConvertible {
 
 // MARK: - Main
 
-var recorder: MeetingRecorder?
+var recorder: ScreenRecorder?
 
-// Handle Ctrl+C
 signal(SIGINT) { _ in
     recorder?.stop()
 }
@@ -298,29 +403,29 @@ signal(SIGTERM) { _ in
     recorder?.stop()
 }
 
-// Generate output filename in Recordings folder
 let dateFormatter = DateFormatter()
 dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
 let timestamp = dateFormatter.string(from: Date())
 
-// Get the directory where the executable is located
 let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
 let recordingsDir = executableURL.appendingPathComponent("recordings")
-
-// Create Recordings directory if it doesn't exist
 try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
 
-let outputURL = recordingsDir.appendingPathComponent("meeting_\(timestamp).mp4")
+let outputURL = recordingsDir.appendingPathComponent("recording_\(timestamp).mp4")
 
-let version = "0.0.2"
+let version = "0.0.5"
 print("OpenRec v\(version) - Screen + Audio Recorder")
 print("Output: \(outputURL.path)")
+
+let diskStatus = DiskSpaceStatus.check()
+diskStatus.display()
+
+if diskStatus.level == .risk {
+    print("\nWARNING: Very low disk space!")
+}
 print("")
 
-recorder = MeetingRecorder(outputURL: outputURL)
-
-// Run async
-let semaphore = DispatchSemaphore(value: 0)
+recorder = ScreenRecorder(outputURL: outputURL)
 
 Task {
     do {
@@ -331,5 +436,4 @@ Task {
     }
 }
 
-// Keep running
 RunLoop.main.run()

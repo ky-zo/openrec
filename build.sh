@@ -5,13 +5,13 @@ VERSION=$(cat VERSION 2>/dev/null || echo "dev")
 echo "Building OpenRec v$VERSION..."
 
 swiftc -O \
-    -o meetrec \
+    -o openrec \
     -framework ScreenCaptureKit \
     -framework AVFoundation \
     -framework CoreMedia \
-    meetrec.swift
+    openrec.swift
 
-echo "Build complete! Run with: ./meetrec"
+echo "Build complete! Run with: ./openrec"
 echo "Version: $VERSION"
 echo ""
 echo "Note: On first run, macOS will ask for Screen Recording permission."
