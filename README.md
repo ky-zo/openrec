@@ -3,7 +3,7 @@
     <img src="assets/fluar-logo.png" alt="Fluar" width="150">
   </a>
   <br>
-  <em>Sponsored by <a href="https://fluar.com">Fluar.com</a> - Go To Market platform for your startup Data Enrichment</em>
+  <em>Sponsored by <a href="https://fluar.com">Fluar.com</a> - Go To Market and Data Enrichment platform for your startup</em>
 </p>
 
 ---
