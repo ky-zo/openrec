@@ -3,6 +3,144 @@ import AVFoundation
 import CoreMedia
 import Darwin
 
+// MARK: - CLI Helpers
+
+class CLI {
+    // ANSI colors (bright variants for vivid colors)
+    static let blue = "\u{1B}[34m"
+    static let green = "\u{1B}[92m"  // Bright green
+    static let red = "\u{1B}[91m"    // Bright red
+    static let purple = "\u{1B}[95m" // Bright magenta/purple
+    static let dim = "\u{1B}[2m"
+    static let reset = "\u{1B}[0m"
+    static let hideCursor = "\u{1B}[?25l"
+    static let showCursor = "\u{1B}[?25h"
+    static let moveUp = "\u{1B}[A"
+    static let clearToEnd = "\u{1B}[J"
+
+    /// Create a clickable hyperlink (OSC 8)
+    static func link(_ text: String, url: String) -> String {
+        return "\u{1B}]8;;\(url)\u{1B}\\\(text)\u{1B}]8;;\u{1B}\\"
+    }
+
+    static let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    static var spinnerIndex = 0
+
+    static func clearLine() {
+        print("\r\u{1B}[K", terminator: "")
+        fflush(stdout)
+    }
+
+    static func printStatus(_ message: String, spinner: Bool = false) {
+        clearLine()
+        if spinner {
+            let s = self.spinner[spinnerIndex % self.spinner.count]
+            spinnerIndex += 1
+            print("\(blue)\(s)\(reset) \(message)", terminator: "")
+        } else {
+            print(message, terminator: "")
+        }
+        fflush(stdout)
+    }
+
+    static func printDone(_ message: String) {
+        clearLine()
+        print("\(green)✓\(reset) \(message)")
+    }
+
+    static func printError(_ message: String) {
+        clearLine()
+        print("\(red)✗\(reset) \(message)")
+    }
+
+    static func formatDuration(_ seconds: Int) -> String {
+        let hrs = seconds / 3600
+        let mins = (seconds % 3600) / 60
+        let secs = seconds % 60
+        if hrs > 0 {
+            return String(format: "%d:%02d:%02d", hrs, mins, secs)
+        } else {
+            return String(format: "%d:%02d", mins, secs)
+        }
+    }
+
+    /// Interactive menu with arrow key navigation
+    static func selectMenu(title: String, options: [String]) -> Int {
+        var selected = 0
+        let count = options.count
+
+        // Save terminal state and enable raw mode
+        var originalTermios = termios()
+        tcgetattr(STDIN_FILENO, &originalTermios)
+        var raw = originalTermios
+        raw.c_lflag &= ~UInt(ICANON | ECHO)
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw)
+
+        print(hideCursor, terminator: "")
+        fflush(stdout)
+
+        func render() {
+            // Move cursor up to redraw (except first render)
+            print("\r", terminator: "")
+
+            print("\(dim)\(title)\(reset)")
+            for (i, option) in options.enumerated() {
+                let bullet = i == selected ? "\(green)●\(reset)" : "\(dim)○\(reset)"
+                let text = i == selected ? option : "\(dim)\(option)\(reset)"
+                print("  \(bullet) \(text)")
+            }
+            print("\(dim)  ↑/↓ navigate • enter select\(reset)", terminator: "")
+            fflush(stdout)
+        }
+
+        func clearMenu() {
+            // Clear current line (hint) first, then move up and clear rest
+            print("\r\u{1B}[K", terminator: "")
+            for _ in 0..<(count + 1) {
+                print("\(moveUp)\r\u{1B}[K", terminator: "")
+            }
+            fflush(stdout)
+        }
+
+        render()
+
+        // Read input
+        while true {
+            var c: UInt8 = 0
+            read(STDIN_FILENO, &c, 1)
+
+            if c == 27 { // ESC sequence
+                var seq: [UInt8] = [0, 0]
+                read(STDIN_FILENO, &seq[0], 1)
+                read(STDIN_FILENO, &seq[1], 1)
+                if seq[0] == 91 { // [
+                    if seq[1] == 65 { // A = Up
+                        selected = (selected - 1 + count) % count
+                    } else if seq[1] == 66 { // B = Down
+                        selected = (selected + 1) % count
+                    }
+                }
+            } else if c == 10 || c == 13 { // Enter
+                break
+            }
+
+            // Redraw
+            clearMenu()
+            render()
+        }
+
+        // Restore terminal
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &originalTermios)
+        print(showCursor, terminator: "")
+
+        // Clear menu and show selection
+        clearMenu()
+        fflush(stdout)
+
+        return selected
+    }
+}
+
 // MARK: - Disk Space Checker
 
 struct DiskSpaceStatus {
@@ -54,6 +192,33 @@ struct DiskSpaceStatus {
     }
 }
 
+// MARK: - Microphone Selection
+
+func selectMicrophone() -> AVCaptureDevice? {
+    let discoverySession = AVCaptureDevice.DiscoverySession(
+        deviceTypes: [.microphone],
+        mediaType: .audio,
+        position: .unspecified
+    )
+    let devices = discoverySession.devices
+
+    if devices.isEmpty {
+        return nil
+    }
+
+    if devices.count == 1 {
+        CLI.printDone("Microphone: \(devices[0].localizedName)")
+        return devices[0]
+    }
+
+    // Interactive menu for multiple mics
+    let options = devices.map { $0.localizedName }
+    let selected = CLI.selectMenu(title: "Select microphone:", options: options)
+
+    CLI.printDone("Microphone: \(devices[selected].localizedName)")
+    return devices[selected]
+}
+
 // MARK: - Screen Recorder
 
 class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
@@ -72,11 +237,15 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     // State
     private var isRecording = false
     private var sessionStarted = false
+    private var recordingStartTime: Date?
+    private var statusTimer: Timer?
 
     private let outputURL: URL
+    private let micDevice: AVCaptureDevice?
 
-    init(outputURL: URL) {
+    init(outputURL: URL, micDevice: AVCaptureDevice?) {
         self.outputURL = outputURL
+        self.micDevice = micDevice
         super.init()
     }
 
@@ -87,7 +256,8 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
             throw RecorderError.noDisplay
         }
 
-        print("Recording display: \(display.width)x\(display.height)")
+        let displayWidth = display.width
+        let displayHeight = display.height
 
         // Configure stream
         let config = SCStreamConfiguration()
@@ -120,7 +290,18 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         micCaptureSession?.startRunning()
 
         isRecording = true
-        print("Recording started! Press Ctrl+C to stop.")
+        recordingStartTime = Date()
+
+        // Start status timer on main thread
+        DispatchQueue.main.async {
+            self.statusTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                self?.updateRecordingStatus()
+            }
+        }
+
+        CLI.printDone("Recording started")
+        print("  Display: \(displayWidth)x\(displayHeight)")
+        print("  Press \(CLI.red)[Ctrl+C]\(CLI.reset) to \(CLI.red)stop\(CLI.reset)\n")
     }
 
     private func setupAssetWriter(width: Int, height: Int) throws {
@@ -177,14 +358,13 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     }
 
     private func setupMicrophone() throws {
-        micCaptureSession = AVCaptureSession()
-
-        guard let micDevice = AVCaptureDevice.default(for: .audio) else {
-            print("Note: No microphone found, recording without mic")
+        guard let device = micDevice else {
             return
         }
 
-        let micInput = try AVCaptureDeviceInput(device: micDevice)
+        micCaptureSession = AVCaptureSession()
+
+        let micInput = try AVCaptureDeviceInput(device: device)
         if micCaptureSession?.canAddInput(micInput) == true {
             micCaptureSession?.addInput(micInput)
         }
@@ -197,16 +377,38 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         }
     }
 
+    private func updateRecordingStatus() {
+        guard isRecording, let startTime = recordingStartTime else { return }
+        let elapsed = Int(Date().timeIntervalSince(startTime))
+        let duration = CLI.formatDuration(elapsed)
+        CLI.printStatus("Recording \(duration)", spinner: true)
+    }
+
     func stop() {
         guard isRecording else { return }
         isRecording = false
 
-        print("\nStopping recording...")
+        // Stop the status timer
+        statusTimer?.invalidate()
+        statusTimer = nil
+
+        // Calculate final duration
+        let duration: String
+        if let startTime = recordingStartTime {
+            let elapsed = Int(Date().timeIntervalSince(startTime))
+            duration = CLI.formatDuration(elapsed)
+        } else {
+            duration = "0:00"
+        }
+
+        CLI.printDone("Recorded \(duration)")
 
         // Stop captures
         micCaptureSession?.stopRunning()
 
         Task {
+            CLI.printStatus("Saving video...", spinner: true)
+
             try? await stream?.stopCapture()
 
             // Finish writing
@@ -218,15 +420,17 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
 
             if assetWriter?.status == .completed {
                 let size = fileSize(at: outputURL)
-                print("Recording saved: \(outputURL.path)")
-                print("Size: \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))")
+                CLI.printDone("Video saved (\(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)))")
 
                 // Merge audio tracks if ffmpeg is available
                 mergeAudioTracks(at: outputURL)
+
+                print("\n  \(outputURL.path)")
             } else if let error = assetWriter?.error {
-                print("Error saving: \(error.localizedDescription)")
+                CLI.printError("Failed to save: \(error.localizedDescription)")
             }
 
+            print("")
             exit(0)
         }
     }
@@ -239,7 +443,6 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     private func mergeAudioTracks(at url: URL) {
         // Check if ffmpeg is available
         guard shellRun("which ffmpeg >/dev/null 2>&1") else {
-            print("Note: Install ffmpeg to auto-merge mic audio (brew install ffmpeg)")
             return
         }
 
@@ -250,7 +453,15 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
             return // Only one audio track, no merge needed
         }
 
-        print("Merging audio tracks...")
+        // Start spinner for merging
+        var merging = true
+        let spinnerQueue = DispatchQueue(label: "spinner")
+        spinnerQueue.async {
+            while merging {
+                CLI.printStatus("Mixing audio tracks...", spinner: true)
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
 
         let tempPath = url.deletingLastPathComponent().appendingPathComponent("temp_merged.mp4").path
 
@@ -263,13 +474,18 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
             '\(tempPath)' </dev/null >/dev/null 2>&1
             """
 
-        if shellRun(mergeCmd) {
+        let success = shellRun(mergeCmd)
+        merging = false
+        Thread.sleep(forTimeInterval: 0.15) // Let spinner finish
+
+        if success {
             try? FileManager.default.removeItem(at: url)
             try? FileManager.default.moveItem(atPath: tempPath, toPath: url.path)
             let newSize = fileSize(at: url)
-            print("Audio merged! Final size: \(ByteCountFormatter.string(fromByteCount: newSize, countStyle: .file))")
+            CLI.printDone("Audio mixed (\(ByteCountFormatter.string(fromByteCount: newSize, countStyle: .file)))")
         } else {
             try? FileManager.default.removeItem(atPath: tempPath)
+            CLI.printError("Failed to mix audio")
         }
     }
 
@@ -367,9 +583,9 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         let nsError = error as NSError
         if nsError.code == -3817 {
-            print("\nScreen sharing stopped by user")
+            // User stopped screen sharing via system UI
         } else {
-            print("\nStream stopped: \(error.localizedDescription)")
+            CLI.printError("Stream error: \(error.localizedDescription)")
         }
         stop()
     }
@@ -414,24 +630,28 @@ try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDire
 let outputURL = recordingsDir.appendingPathComponent("recording_\(timestamp).mp4")
 
 let version = "0.0.5"
-print("OpenRec v\(version) - Screen + Audio Recorder")
-print("Output: \(outputURL.path)")
+let fluarLink = CLI.link("fluar.com", url: "https://fluar.com")
+print("OpenRec v\(version)")
+print("by \(CLI.purple)\(fluarLink)\(CLI.reset)\n")
 
 let diskStatus = DiskSpaceStatus.check()
-diskStatus.display()
-
 if diskStatus.level == .risk {
-    print("\nWARNING: Very low disk space!")
+    CLI.printError("Very low disk space (\(String(format: "%.1f GB", diskStatus.availableGB)))")
+    print("")
+} else if diskStatus.level == .warn {
+    print("⚠ Low disk space (\(String(format: "%.1f GB", diskStatus.availableGB)))\n")
 }
-print("")
 
-recorder = ScreenRecorder(outputURL: outputURL)
+let selectedMic = selectMicrophone()
+
+recorder = ScreenRecorder(outputURL: outputURL, micDevice: selectedMic)
 
 Task {
     do {
+        CLI.printStatus("Starting capture...", spinner: true)
         try await recorder?.start()
     } catch {
-        print("Error: \(error)")
+        CLI.printError("Failed to start: \(error)")
         exit(1)
     }
 }
