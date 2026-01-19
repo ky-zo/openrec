@@ -17,6 +17,7 @@ class CLI {
     static let showCursor = "\u{1B}[?25h"
     static let moveUp = "\u{1B}[A"
     static let clearToEnd = "\u{1B}[J"
+    static let underline = "\u{1B}[4m"
 
     /// Create a clickable hyperlink (OSC 8)
     static func link(_ text: String, url: String) -> String {
@@ -192,6 +193,27 @@ struct DiskSpaceStatus {
     }
 }
 
+// MARK: - Recording Name Input
+
+func promptRecordingName() -> String? {
+    print("\(CLI.dim)Group into folder name (enter to skip):\(CLI.reset) ", terminator: "")
+    fflush(stdout)
+
+    let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Clear the prompt line
+    print("\(CLI.moveUp)\r\u{1B}[K", terminator: "")
+    fflush(stdout)
+
+    if let input = input, !input.isEmpty {
+        // Sanitize for filesystem
+        let sanitized = input.replacingOccurrences(of: "/", with: "-")
+                             .replacingOccurrences(of: ":", with: "-")
+        return sanitized
+    }
+    return nil
+}
+
 // MARK: - Microphone Selection
 
 func selectMicrophone() -> AVCaptureDevice? {
@@ -239,6 +261,11 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     private var sessionStarted = false
     private var recordingStartTime: Date?
     private var statusTimer: Timer?
+
+    // Audio level visualization
+    private var micAudioLevel: Float = 0
+    private var systemAudioLevel: Float = 0
+    private var audioLevelLock = NSLock()
 
     private let outputURL: URL
     private let micDevice: AVCaptureDevice?
@@ -381,7 +408,60 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         guard isRecording, let startTime = recordingStartTime else { return }
         let elapsed = Int(Date().timeIntervalSince(startTime))
         let duration = CLI.formatDuration(elapsed)
-        CLI.printStatus("Recording \(duration)", spinner: true)
+
+        audioLevelLock.lock()
+        let micLevel = micAudioLevel
+        let sysLevel = systemAudioLevel
+        audioLevelLock.unlock()
+
+        let micMeter = formatMeter(micLevel)
+        let sysMeter = formatMeter(sysLevel)
+
+        CLI.printStatus("Recording \(duration)  \(CLI.dim)you\(CLI.reset) \(micMeter)  \(CLI.dim)them\(CLI.reset) \(sysMeter)", spinner: true)
+    }
+
+    private func formatMeter(_ level: Float) -> String {
+        let filled = Int(level * 5)
+        var dots = ""
+        for i in 0..<5 {
+            if i < filled {
+                if i >= 4 {
+                    dots += "\(CLI.red)●\(CLI.reset)"
+                } else if i >= 3 {
+                    dots += "\(CLI.purple)●\(CLI.reset)"
+                } else {
+                    dots += "\(CLI.green)●\(CLI.reset)"
+                }
+            } else {
+                dots += "\(CLI.dim)·\(CLI.reset)"
+            }
+        }
+        return dots
+    }
+
+    private func calculateAudioLevel(from sampleBuffer: CMSampleBuffer) -> Float {
+        guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return 0 }
+
+        var length = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
+
+        guard let data = dataPointer, length > 0 else { return 0 }
+
+        // Audio is Float32 format
+        let samples = UnsafeRawPointer(data).bindMemory(to: Float32.self, capacity: length / 4)
+        let sampleCount = length / 4
+        var sum: Float = 0
+
+        let count = min(sampleCount, 512)
+        for i in 0..<count {
+            let sample = samples[i]
+            sum += sample * sample
+        }
+
+        let rms = sqrt(sum / Float(count))
+        // Scale for visibility
+        return min(1.0, rms * 12.0)
     }
 
     func stop() {
@@ -425,7 +505,17 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
                 // Merge audio tracks if ffmpeg is available
                 mergeAudioTracks(at: outputURL)
 
-                print("\n  \(outputURL.path)")
+                // Show clickable links
+                let folderURL = outputURL.deletingLastPathComponent()
+                let folderLink = CLI.link("\(CLI.blue)\(CLI.underline)Folder\(CLI.reset)", url: "file://\(folderURL.path)")
+                let fileLink = CLI.link("\(CLI.blue)\(CLI.underline)Recording\(CLI.reset)", url: "file://\(outputURL.path)")
+
+                print("")
+                print("  📁 \(folderLink)")
+                print("  🎬 \(fileLink)")
+                print("")
+                print("  \(CLI.dim)cmd+click to open\(CLI.reset)")
+                print("  \(CLI.dim)\(folderURL.path)\(CLI.reset)")
             } else if let error = assetWriter?.error {
                 CLI.printError("Failed to save: \(error.localizedDescription)")
             }
@@ -566,6 +656,12 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         if systemAudioInput?.isReadyForMoreMediaData == true {
             systemAudioInput?.append(sampleBuffer)
         }
+
+        // Calculate system audio level for visualization
+        let level = calculateAudioLevel(from: sampleBuffer)
+        audioLevelLock.lock()
+        systemAudioLevel = level
+        audioLevelLock.unlock()
     }
 
     // MARK: - AVCaptureAudioDataOutputSampleBufferDelegate
@@ -576,6 +672,12 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         if micAudioInput?.isReadyForMoreMediaData == true {
             micAudioInput?.append(sampleBuffer)
         }
+
+        // Calculate mic audio level for visualization
+        let level = calculateAudioLevel(from: sampleBuffer)
+        audioLevelLock.lock()
+        micAudioLevel = level
+        audioLevelLock.unlock()
     }
 
     // MARK: - SCStreamDelegate
@@ -625,11 +727,8 @@ let timestamp = dateFormatter.string(from: Date())
 
 let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
 let recordingsDir = executableURL.appendingPathComponent("recordings")
-try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
 
-let outputURL = recordingsDir.appendingPathComponent("recording_\(timestamp).mp4")
-
-let version = "0.0.5"
+let version = "0.0.6"
 let fluarLink = CLI.link("fluar.com", url: "https://fluar.com")
 print("OpenRec v\(version)")
 print("by \(CLI.purple)\(fluarLink)\(CLI.reset)\n")
@@ -643,6 +742,21 @@ if diskStatus.level == .risk {
 }
 
 let selectedMic = selectMicrophone()
+let recordingName = promptRecordingName()
+
+// Build output path based on name
+let outputURL: URL
+if let name = recordingName {
+    // recordings/{name}/{timestamp}/{name}_recording_{timestamp}.mp4
+    let namedDir = recordingsDir.appendingPathComponent(name).appendingPathComponent(timestamp)
+    try? FileManager.default.createDirectory(at: namedDir, withIntermediateDirectories: true)
+    outputURL = namedDir.appendingPathComponent("\(name)_recording_\(timestamp).mp4")
+    CLI.printDone("Folder: \(name)")
+} else {
+    // recordings/recording_{timestamp}.mp4
+    try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
+    outputURL = recordingsDir.appendingPathComponent("recording_\(timestamp).mp4")
+}
 
 recorder = ScreenRecorder(outputURL: outputURL, micDevice: selectedMic)
 
