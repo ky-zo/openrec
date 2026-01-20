@@ -75,7 +75,11 @@ fi
 
 printf '%s\n' "$tag" > VERSION
 git add VERSION
-git commit -m "Release $tag"
+if git diff --cached --quiet; then
+  echo "VERSION already set to $tag; tagging current HEAD."
+else
+  git commit -m "Release $tag"
+fi
 git tag "$tag"
 
 if [ -x "./build.sh" ]; then
