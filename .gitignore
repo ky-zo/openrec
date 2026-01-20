@@ -1,5 +1,11 @@
 # Compiled binary
 meetrec
+openrec
+
+# Build artifacts
+dist/
+.module-cache/
+OpenRecApp/
 
 # Recordings (keep folder, ignore contents)
 Recordings/*

@@ -26,6 +26,11 @@ A lightweight macOS screen recorder that captures screen, system audio, and micr
 - macOS 12.3 or later (requires ScreenCaptureKit)
 - Xcode Command Line Tools
 
+## Download (latest)
+
+Apple Silicon (arm64):
+https://github.com/ky-zo/openrec/releases/latest/download/openrec-macos-arm64.zip
+
 ## Installation
 
 ### Build from source
@@ -39,7 +44,7 @@ cd openrec
 ./build.sh
 
 # Run
-./meetrec
+./openrec
 ```
 
 ### First run permissions
@@ -54,7 +59,7 @@ You may also need to grant microphone access.
 
 ```bash
 # Start recording
-./meetrec
+./openrec
 
 # Stop recording
 # Press Ctrl+C

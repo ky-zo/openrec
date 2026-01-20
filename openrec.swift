@@ -1,3 +1,5 @@
+import Foundation
+import Dispatch
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
@@ -709,6 +711,184 @@ enum RecorderError: Error, CustomStringConvertible {
     }
 }
 
+// MARK: - Update Checker
+
+struct UpdateChecker {
+    struct Version: Comparable, CustomStringConvertible {
+        let parts: [Int]
+        let original: String
+
+        init?(_ string: String) {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let normalized = trimmed.hasPrefix("v") ? String(trimmed.dropFirst()) : trimmed
+            let core = normalized.split(separator: "-").first.map(String.init) ?? normalized
+            let partStrings = core.split(separator: ".")
+            guard !partStrings.isEmpty else { return nil }
+
+            var parsed: [Int] = []
+            for part in partStrings {
+                guard let number = Int(part) else { return nil }
+                parsed.append(number)
+            }
+
+            parts = parsed
+            original = core
+        }
+
+        static func < (lhs: Version, rhs: Version) -> Bool {
+            let maxCount = max(lhs.parts.count, rhs.parts.count)
+            for i in 0..<maxCount {
+                let left = i < lhs.parts.count ? lhs.parts[i] : 0
+                let right = i < rhs.parts.count ? rhs.parts[i] : 0
+                if left != right {
+                    return left < right
+                }
+            }
+            return false
+        }
+
+        var description: String {
+            original
+        }
+    }
+
+    struct UpdateInfo {
+        let latestVersion: Version
+        let tag: String
+        let releaseURL: String
+        let downloadURL: String?
+    }
+
+    private static let checkInterval: TimeInterval = 60 * 60 * 24
+    private static let repoOwner = "ky-zo"
+    private static let repoName = "openrec"
+    private static let releasePageURL = "https://github.com/\(repoOwner)/\(repoName)/releases/latest"
+    private static let releaseAPIURL = URL(
+        string: "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases/latest"
+    )!
+
+    private static let assetName: String = {
+#if arch(arm64)
+        return "openrec-macos-arm64.zip"
+#elseif arch(x86_64)
+        return "openrec-macos-x86_64.zip"
+#else
+        return "openrec-macos.zip"
+#endif
+    }()
+
+    static func checkIfNeeded(currentVersion: String) {
+        guard shouldCheck() else { return }
+        defer { saveLastCheck() }
+
+        guard let current = Version(currentVersion) else { return }
+        guard let info = fetchLatestRelease() else { return }
+
+        if info.latestVersion > current {
+            print("")
+            print("Update available: \(info.tag) (installed v\(current))")
+            let link = info.downloadURL ?? info.releaseURL
+            print("Download: \(link)")
+            print("")
+        }
+    }
+
+    private static func shouldCheck() -> Bool {
+        guard let lastCheck = loadLastCheck() else { return true }
+        return Date().timeIntervalSince(lastCheck) >= checkInterval
+    }
+
+    private static func loadLastCheck() -> Date? {
+        let url = stateFileURL()
+        guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+            return nil
+        }
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let timestamp = TimeInterval(trimmed) else { return nil }
+        return Date(timeIntervalSince1970: timestamp)
+    }
+
+    private static func saveLastCheck() {
+        let url = stateFileURL()
+        let timestamp = String(Int(Date().timeIntervalSince1970))
+        try? timestamp.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private static func stateFileURL() -> URL {
+        let fileManager = FileManager.default
+        let baseDir = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? fileManager.temporaryDirectory
+        let appDir = baseDir.appendingPathComponent("openrec", isDirectory: true)
+        try? fileManager.createDirectory(at: appDir, withIntermediateDirectories: true)
+        return appDir.appendingPathComponent("update-check.txt")
+    }
+
+    private static func fetchLatestRelease() -> UpdateInfo? {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 3
+        config.timeoutIntervalForResource = 3
+        let session = URLSession(configuration: config)
+
+        var request = URLRequest(url: releaseAPIURL)
+        request.timeoutInterval = 3
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("OpenRec", forHTTPHeaderField: "User-Agent")
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: UpdateInfo?
+
+        let task = session.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            if error != nil {
+                return
+            }
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                return
+            }
+            guard let data = data else { return }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return
+            }
+            guard let tag = json["tag_name"] as? String else { return }
+            guard let latestVersion = Version(tag) else { return }
+
+            let releaseURL = (json["html_url"] as? String) ?? releasePageURL
+            var downloadURL: String?
+
+            if let assets = json["assets"] as? [[String: Any]] {
+                if let asset = assets.first(where: { ($0["name"] as? String) == assetName }) {
+                    downloadURL = asset["browser_download_url"] as? String
+                }
+            }
+
+            result = UpdateInfo(
+                latestVersion: latestVersion,
+                tag: tag,
+                releaseURL: releaseURL,
+                downloadURL: downloadURL
+            )
+        }
+
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 4)
+        return result
+    }
+}
+
+func loadAppVersion(from directory: URL) -> String {
+    let versionURL = directory.appendingPathComponent("VERSION")
+    if let contents = try? String(contentsOf: versionURL, encoding: .utf8) {
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+    }
+    return "dev"
+}
+
 // MARK: - Main
 
 var recorder: ScreenRecorder?
@@ -728,9 +908,10 @@ let timestamp = dateFormatter.string(from: Date())
 let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
 let recordingsDir = executableURL.appendingPathComponent("recordings")
 
-let version = "0.0.6"
+let rawVersion = loadAppVersion(from: executableURL)
+let displayVersion = rawVersion.hasPrefix("v") ? String(rawVersion.dropFirst()) : rawVersion
 let fluarLink = CLI.link("fluar.com", url: "https://fluar.com")
-print("OpenRec v\(version)")
+print("OpenRec v\(displayVersion)")
 print("by \(CLI.purple)\(fluarLink)\(CLI.reset)\n")
 
 let diskStatus = DiskSpaceStatus.check()
@@ -740,6 +921,8 @@ if diskStatus.level == .risk {
 } else if diskStatus.level == .warn {
     print("⚠ Low disk space (\(String(format: "%.1f GB", diskStatus.availableGB)))\n")
 }
+
+UpdateChecker.checkIfNeeded(currentVersion: rawVersion)
 
 let selectedMic = selectMicrophone()
 let recordingName = promptRecordingName()
