@@ -1,7 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Download01Icon } from "@hugeicons/react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { Download01Icon } from "@hugeicons/core-free-icons";
 import { motion } from "motion/react";
 
 function GithubIcon({ className }: { className?: string }) {
@@ -51,7 +52,7 @@ export default function Page() {
                     className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto pt-8"
                 >
                     <Button size="lg" className="text-base h-12 px-8 rounded-full shadow-lg hover:shadow-xl transition-all duration-300">
-                        <Download01Icon className="mr-2 size-5" />
+                        <HugeiconsIcon icon={Download01Icon} className="mr-2 size-5" />
                         Download
                     </Button>
                     <Button size="lg" variant="outline" className="text-base h-12 px-8 rounded-full border-2 hover:bg-secondary/50 transition-all duration-300">
