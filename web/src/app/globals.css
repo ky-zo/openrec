@@ -150,7 +150,7 @@ h2 {
   width: 100%;
   max-width: 500px;
   height: 60px;
-  margin-bottom: 2.5rem;
+  margin: 0 auto 2.5rem auto;
   opacity: 0;
   animation: fadeIn 1s ease forwards;
   animation-delay: 1s;
@@ -164,6 +164,7 @@ h2 {
   justify-content: center;
   gap: 3px;
   height: 100%;
+  width: 100%;
 }
 
 .waveform-bar {
