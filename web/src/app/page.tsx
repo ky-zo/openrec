@@ -165,7 +165,7 @@ export default function Page() {
           <Button
             size="lg"
             className="btn-shadcn btn-shadcn-primary"
-            render={<a href="https://github.com/ky-zo/openrec/releases/latest" />}
+            render={<a href="https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg" />}
           >
             <DownloadIcon className="size-5" />
             Download
