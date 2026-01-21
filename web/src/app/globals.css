@@ -146,31 +146,40 @@ h2 {
 
 /* Waveform */
 .waveform {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
+  position: relative;
+  width: 100%;
+  max-width: 500px;
   height: 60px;
   margin-bottom: 2.5rem;
   opacity: 0;
   animation: fadeIn 1s ease forwards;
   animation-delay: 1s;
+  mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%);
+}
+
+.waveform-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 100%;
 }
 
 .waveform-bar {
   width: 3px;
-  height: 100%;
+  min-width: 3px;
   background: linear-gradient(to top, var(--text-muted), var(--text));
   border-radius: 2px;
-  animation: waveform 1.2s ease-in-out infinite;
+  animation: waveform-random ease-in-out infinite alternate;
 }
 
-@keyframes waveform {
-  0%, 100% {
-    transform: scaleY(0.3);
-    opacity: 0.4;
+@keyframes waveform-random {
+  0% {
+    transform: scaleY(0.4);
+    opacity: 0.5;
   }
-  50% {
+  100% {
     transform: scaleY(1);
     opacity: 1;
   }

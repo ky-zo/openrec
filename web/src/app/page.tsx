@@ -39,17 +39,28 @@ function FluarLogo({ className }: { className?: string }) {
 }
 
 function Waveform() {
+  // Generate random heights and animation properties for each bar
+  const bars = Array.from({ length: 50 }).map((_, i) => ({
+    height: 20 + Math.random() * 80, // Random height between 20-100%
+    delay: Math.random() * 2, // Random delay 0-2s
+    duration: 0.8 + Math.random() * 1.2, // Random duration 0.8-2s
+  }));
+
   return (
     <div className="waveform">
-      {Array.from({ length: 40 }).map((_, i) => (
-        <div
-          key={i}
-          className="waveform-bar"
-          style={{
-            animationDelay: `${i * 0.05}s`,
-          }}
-        />
-      ))}
+      <div className="waveform-inner">
+        {bars.map((bar, i) => (
+          <div
+            key={i}
+            className="waveform-bar"
+            style={{
+              height: `${bar.height}%`,
+              animationDelay: `${bar.delay}s`,
+              animationDuration: `${bar.duration}s`,
+            }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
