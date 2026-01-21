@@ -3,9 +3,12 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
     private var recorderManager: RecorderManager!
-    private var eventMonitor: Any?
+    private var controlWindow: NSWindow?
+    private let windowState = WindowState()
+    private let expandedSize = NSSize(width: 240, height: 350)
+    private let collapsedSize = NSSize(width: 240, height: 86)
+    private var pendingTerminate = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         recorderManager = RecorderManager()
@@ -15,21 +18,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let button = statusItem.button {
             updateStatusIcon(isRecording: false)
-            button.action = #selector(togglePopover)
+            button.action = #selector(showControlWindow)
             button.target = self
         }
-
-        // Create popover
-        popover = NSPopover()
-        popover.contentSize = NSSize(width: 220, height: 200)
-        popover.behavior = .transient
-        popover.animates = true
-        popover.contentViewController = NSHostingController(
-            rootView: PopoverView(recorderManager: recorderManager)
-        )
-
-        // Force dark appearance
-        popover.appearance = NSAppearance(named: .darkAqua)
 
         // Observe recording state changes to update icon
         recorderManager.onRecordingStateChange = { [weak self] isRecording in
@@ -37,51 +28,114 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updateStatusIcon(isRecording: isRecording)
             }
         }
+        recorderManager.onProcessingComplete = { [weak self] in
+            self?.finishPendingTerminationIfNeeded()
+        }
 
-        // Monitor for clicks outside popover to close it
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            if let popover = self?.popover, popover.isShown {
-                popover.performClose(nil)
-            }
+        windowState.onCollapseChange = { [weak self] collapsed in
+            self?.updateWindowSize(collapsed: collapsed, animated: true)
+        }
+
+        setupControlWindow()
+
+        // Show the control window on launch after the status item is ready.
+        DispatchQueue.main.async {
+            self.showControlWindow()
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let eventMonitor = eventMonitor {
-            NSEvent.removeMonitor(eventMonitor)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if recorderManager.isRecording {
+            pendingTerminate = true
+            recorderManager.stopRecording()
+            return .terminateLater
         }
+
+        if recorderManager.isProcessing {
+            pendingTerminate = true
+            return .terminateLater
+        }
+
+        return .terminateNow
     }
 
     private func updateStatusIcon(isRecording: Bool) {
         guard let button = statusItem.button else { return }
 
-        if isRecording {
-            // Red recording indicator
-            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-            let image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")
-            image?.isTemplate = false
-            button.image = image?.withSymbolConfiguration(config)
-            button.contentTintColor = .systemRed
-        } else {
-            // Normal state
-            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-            let image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "OpenRec")
-            image?.isTemplate = true
-            button.image = image?.withSymbolConfiguration(config)
-            button.contentTintColor = nil
-        }
+        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+        let symbolName = isRecording ? "record.circle.fill" : "record.circle"
+        let description = isRecording ? "Recording" : "OpenRec"
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)
+        image?.isTemplate = true
+        button.image = image?.withSymbolConfiguration(config)
+        button.contentTintColor = isRecording ? .systemRed : nil
     }
 
-    @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
+    @objc private func showControlWindow() {
+        guard let window = controlWindow else { return }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
-        if popover.isShown {
-            popover.performClose(nil)
-        } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    private func setupControlWindow() {
+        let rect = NSRect(origin: .zero, size: expandedSize)
+        let window = NSWindow(
+            contentRect: rect,
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "OpenRec"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false
+        window.level = .floating
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = true
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
 
-            // Bring app to front when showing popover
-            NSApp.activate(ignoringOtherApps: true)
+        window.contentView = NSHostingView(
+            rootView: FloatingPanelView(
+                recorderManager: recorderManager,
+                windowState: windowState
+            )
+        )
+
+        configureTrafficLights(for: window)
+
+        window.center()
+        controlWindow = window
+    }
+
+    private func updateWindowSize(collapsed: Bool, animated: Bool) {
+        guard let window = controlWindow else { return }
+        let targetSize = collapsed ? collapsedSize : expandedSize
+        let frame = window.frame
+        let newFrame = NSRect(
+            x: frame.origin.x,
+            y: frame.origin.y + frame.height - targetSize.height,
+            width: targetSize.width,
+            height: targetSize.height
+        )
+        window.setFrame(newFrame, display: true, animate: animated)
+    }
+
+    private func finishPendingTerminationIfNeeded() {
+        guard pendingTerminate else { return }
+        pendingTerminate = false
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
+    private func configureTrafficLights(for window: NSWindow) {
+        let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        for buttonType in buttons {
+            window.standardWindowButton(buttonType)?.isHidden = true
         }
     }
 }

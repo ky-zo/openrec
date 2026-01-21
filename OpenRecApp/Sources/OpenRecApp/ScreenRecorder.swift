@@ -1,6 +1,7 @@
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
+import CoreGraphics
 
 @available(macOS 13.0, *)
 class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
@@ -29,10 +30,13 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     var onComplete: (() -> Void)?
 
     private let outputURL: URL
+    private let audioOutputURL: URL?
     private let micDevice: AVCaptureDevice?
+    private(set) var recordingDisplayID: CGDirectDisplayID?
 
-    init(outputURL: URL, micDevice: AVCaptureDevice?) {
+    init(outputURL: URL, audioOutputURL: URL?, micDevice: AVCaptureDevice?) {
         self.outputURL = outputURL
+        self.audioOutputURL = audioOutputURL
         self.micDevice = micDevice
         super.init()
     }
@@ -43,6 +47,7 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         guard let display = content.displays.first else {
             throw RecorderError.noDisplay
         }
+        recordingDisplayID = display.displayID
 
         // Configure stream
         let config = SCStreamConfiguration()
@@ -190,19 +195,22 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
             await assetWriter?.finishWriting()
 
             if assetWriter?.status == .completed {
+                let hasFFmpeg = shellRun("which ffmpeg >/dev/null 2>&1")
+
                 // Merge audio tracks if ffmpeg is available
-                await mergeAudioTracks(at: outputURL)
+                await mergeAudioTracks(at: outputURL, ffmpegAvailable: hasFFmpeg)
+
+                if let audioOutputURL = audioOutputURL {
+                    _ = exportAudioMp3(from: outputURL, to: audioOutputURL, ffmpegAvailable: hasFFmpeg)
+                }
             }
 
             onComplete?()
         }
     }
 
-    private func mergeAudioTracks(at url: URL) async {
-        // Check if ffmpeg is available
-        guard shellRun("which ffmpeg >/dev/null 2>&1") else {
-            return
-        }
+    private func mergeAudioTracks(at url: URL, ffmpegAvailable: Bool) async {
+        guard ffmpegAvailable else { return }
 
         // Check if file has 2 audio tracks using ffprobe
         let probeCmd = "ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 '\(url.path)' 2>/dev/null | wc -l"
@@ -230,6 +238,18 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         } else {
             try? FileManager.default.removeItem(atPath: tempPath)
         }
+    }
+
+    private func exportAudioMp3(from url: URL, to audioURL: URL, ffmpegAvailable: Bool) -> Bool {
+        guard ffmpegAvailable else { return false }
+
+        let exportCmd = """
+            ffmpeg -y -i '\(url.path)' \
+            -vn -c:a libmp3lame -q:a 2 \
+            '\(audioURL.path)' </dev/null >/dev/null 2>&1
+            """
+
+        return shellRun(exportCmd)
     }
 
     private func shellRun(_ command: String) -> Bool {

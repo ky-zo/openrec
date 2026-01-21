@@ -197,8 +197,27 @@ struct DiskSpaceStatus {
 
 // MARK: - Recording Name Input
 
-func promptRecordingName() -> String? {
-    print("\(CLI.dim)Group into folder name (enter to skip):\(CLI.reset) ", terminator: "")
+func loadLastClientName(from recordingsDir: URL) -> String? {
+    let fileURL = recordingsDir.appendingPathComponent(".last_client")
+    guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else {
+        return nil
+    }
+    let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
+func saveLastClientName(_ name: String, to recordingsDir: URL) {
+    try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
+    let fileURL = recordingsDir.appendingPathComponent(".last_client")
+    try? name.write(to: fileURL, atomically: true, encoding: .utf8)
+}
+
+func promptRecordingName(lastName: String?) -> String? {
+    if let lastName = lastName {
+        print("\(CLI.dim)Client name (enter to reuse '\(lastName)', '-' to skip):\(CLI.reset) ", terminator: "")
+    } else {
+        print("\(CLI.dim)Client name (enter to skip):\(CLI.reset) ", terminator: "")
+    }
     fflush(stdout)
 
     let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -207,7 +226,13 @@ func promptRecordingName() -> String? {
     print("\(CLI.moveUp)\r\u{1B}[K", terminator: "")
     fflush(stdout)
 
-    if let input = input, !input.isEmpty {
+    if let input = input {
+        if input == "-" {
+            return nil
+        }
+        if input.isEmpty {
+            return lastName
+        }
         // Sanitize for filesystem
         let sanitized = input.replacingOccurrences(of: "/", with: "-")
                              .replacingOccurrences(of: ":", with: "-")
@@ -270,10 +295,12 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     private var audioLevelLock = NSLock()
 
     private let outputURL: URL
+    private let audioOutputURL: URL?
     private let micDevice: AVCaptureDevice?
 
-    init(outputURL: URL, micDevice: AVCaptureDevice?) {
+    init(outputURL: URL, audioOutputURL: URL?, micDevice: AVCaptureDevice?) {
         self.outputURL = outputURL
+        self.audioOutputURL = audioOutputURL
         self.micDevice = micDevice
         super.init()
     }
@@ -504,8 +531,18 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
                 let size = fileSize(at: outputURL)
                 CLI.printDone("Video saved (\(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)))")
 
-                // Merge audio tracks if ffmpeg is available
-                mergeAudioTracks(at: outputURL)
+                let hasFFmpeg = shellRun("which ffmpeg >/dev/null 2>&1")
+
+                // Merge audio tracks if possible
+                mergeAudioTracks(at: outputURL, ffmpegAvailable: hasFFmpeg)
+
+                // Export MP3 audio if requested
+                var audioLink: String?
+                if let audioOutputURL = audioOutputURL {
+                    if exportAudioMp3(from: outputURL, to: audioOutputURL, ffmpegAvailable: hasFFmpeg) {
+                        audioLink = CLI.link("\(CLI.blue)\(CLI.underline)Audio (MP3)\(CLI.reset)", url: "file://\(audioOutputURL.path)")
+                    }
+                }
 
                 // Show clickable links
                 let folderURL = outputURL.deletingLastPathComponent()
@@ -515,6 +552,9 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
                 print("")
                 print("  📁 \(folderLink)")
                 print("  🎬 \(fileLink)")
+                if let audioLink = audioLink {
+                    print("  🎧 \(audioLink)")
+                }
                 print("")
                 print("  \(CLI.dim)cmd+click to open\(CLI.reset)")
                 print("  \(CLI.dim)\(folderURL.path)\(CLI.reset)")
@@ -532,9 +572,8 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         return attrs?[.size] as? Int64 ?? 0
     }
 
-    private func mergeAudioTracks(at url: URL) {
-        // Check if ffmpeg is available
-        guard shellRun("which ffmpeg >/dev/null 2>&1") else {
+    private func mergeAudioTracks(at url: URL, ffmpegAvailable: Bool) {
+        guard ffmpegAvailable else {
             return
         }
 
@@ -579,6 +618,41 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
             try? FileManager.default.removeItem(atPath: tempPath)
             CLI.printError("Failed to mix audio")
         }
+    }
+
+    private func exportAudioMp3(from url: URL, to audioURL: URL, ffmpegAvailable: Bool) -> Bool {
+        guard ffmpegAvailable else {
+            CLI.printError("ffmpeg not found; skipping MP3 export")
+            return false
+        }
+
+        var exporting = true
+        let spinnerQueue = DispatchQueue(label: "spinner.audio")
+        spinnerQueue.async {
+            while exporting {
+                CLI.printStatus("Exporting MP3...", spinner: true)
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
+
+        let exportCmd = """
+            ffmpeg -y -i '\(url.path)' \
+            -vn -c:a libmp3lame -q:a 2 \
+            '\(audioURL.path)' </dev/null >/dev/null 2>&1
+            """
+
+        let success = shellRun(exportCmd)
+        exporting = false
+        Thread.sleep(forTimeInterval: 0.15)
+
+        if success {
+            let newSize = fileSize(at: audioURL)
+            CLI.printDone("Audio exported (\(ByteCountFormatter.string(fromByteCount: newSize, countStyle: .file)))")
+            return true
+        }
+
+        CLI.printError("Failed to export MP3")
+        return false
     }
 
     private func shellRun(_ command: String) -> Bool {
@@ -925,23 +999,27 @@ if diskStatus.level == .risk {
 UpdateChecker.checkIfNeeded(currentVersion: rawVersion)
 
 let selectedMic = selectMicrophone()
-let recordingName = promptRecordingName()
+let lastClientName = loadLastClientName(from: recordingsDir)
+let recordingName = promptRecordingName(lastName: lastClientName)
 
 // Build output path based on name
-let outputURL: URL
+let outputDir: URL
 if let name = recordingName {
-    // recordings/{name}/{timestamp}/{name}_recording_{timestamp}.mp4
-    let namedDir = recordingsDir.appendingPathComponent(name).appendingPathComponent(timestamp)
-    try? FileManager.default.createDirectory(at: namedDir, withIntermediateDirectories: true)
-    outputURL = namedDir.appendingPathComponent("\(name)_recording_\(timestamp).mp4")
-    CLI.printDone("Folder: \(name)")
+    // recordings/{name}/{timestamp}/
+    outputDir = recordingsDir.appendingPathComponent(name).appendingPathComponent(timestamp)
+    saveLastClientName(name, to: recordingsDir)
+    CLI.printDone("Client folder: \(name)")
 } else {
-    // recordings/recording_{timestamp}.mp4
-    try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
-    outputURL = recordingsDir.appendingPathComponent("recording_\(timestamp).mp4")
+    // recordings/recording_{timestamp}/
+    outputDir = recordingsDir.appendingPathComponent("recording_\(timestamp)")
 }
 
-recorder = ScreenRecorder(outputURL: outputURL, micDevice: selectedMic)
+try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+let baseName = "recording_\(timestamp)"
+let outputURL = outputDir.appendingPathComponent("\(baseName).mp4")
+let audioURL = outputDir.appendingPathComponent("\(baseName).mp3")
+
+recorder = ScreenRecorder(outputURL: outputURL, audioOutputURL: audioURL, micDevice: selectedMic)
 
 Task {
     do {

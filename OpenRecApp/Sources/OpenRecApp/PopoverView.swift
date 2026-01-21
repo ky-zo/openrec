@@ -1,151 +1,260 @@
 import SwiftUI
+import AppKit
 
-struct PopoverView: View {
+struct PopoverContentView: View {
     @ObservedObject var recorderManager: RecorderManager
     @State private var isHovering = false
     @State private var isHoveringFolder = false
     @State private var isHoveringLocation = false
+    @FocusState private var isClientNameFocused: Bool
+    private let primaryText = Color.white.opacity(0.9)
+    private let secondaryText = Color.white.opacity(0.6)
+    private let hintText = Color.white.opacity(0.45)
+    private let placeholderText = Color.white.opacity(0.5)
+    private let labelFont = Font.system(size: 11, weight: .medium)
+
+    private var selectedMicrophoneName: String {
+        if let selectedID = recorderManager.selectedMicrophoneID,
+           let device = recorderManager.microphoneDevices.first(where: { $0.uniqueID == selectedID }) {
+            return device.localizedName
+        }
+        if let first = recorderManager.microphoneDevices.first {
+            return first.localizedName
+        }
+        return "No microphones"
+    }
+
+    private var hasMicrophones: Bool {
+        !recorderManager.microphoneDevices.isEmpty
+    }
 
     var body: some View {
-        ZStack {
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-
             VStack(spacing: 0) {
-                // Top section with button and status - fixed height
-                VStack(spacing: 8) {
-                    Spacer()
-                        .frame(height: 12)
+            // Top section with button and status - fixed height
+            VStack(spacing: 4) {
+                Spacer()
+                    .frame(height: 0)
 
-                    // Record/Stop Button or Processing indicator
-                    if recorderManager.isProcessing {
-                        // Processing state
-                        VStack(spacing: 8) {
-                            ProgressView()
-                                .scaleEffect(0.8)
+                // Record/Stop Button or Processing indicator
+                if recorderManager.isProcessing || recorderManager.isStarting {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .frame(width: 48, height: 48)
+
+                        Text(recorderManager.isProcessing ? "Saving..." : "Starting...")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                } else {
+                    Button(action: {
+                        if recorderManager.isRecording {
+                            recorderManager.stopRecording()
+                        } else {
+                            Task {
+                                await recorderManager.startRecording()
+                            }
+                        }
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(recorderManager.isRecording ? Color.white.opacity(0.15) : Color.red)
                                 .frame(width: 48, height: 48)
 
-                            Text("Saving...")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                    } else {
-                        Button(action: {
                             if recorderManager.isRecording {
-                                recorderManager.stopRecording()
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.white)
+                                    .frame(width: 18, height: 18)
                             } else {
-                                Task {
-                                    await recorderManager.startRecording()
-                                }
-                            }
-                        }) {
-                            ZStack {
                                 Circle()
-                                    .fill(recorderManager.isRecording ? Color.white.opacity(0.15) : Color.red)
-                                    .frame(width: 48, height: 48)
+                                    .fill(Color.white.opacity(0.9))
+                                    .frame(width: 18, height: 18)
+                            }
+                        }
+                        .scaleEffect(isHovering ? 1.08 : 1.0)
+                        .animation(.easeInOut(duration: 0.15), value: isHovering)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        isHovering = hovering
+                    }
+                }
 
-                                if recorderManager.isRecording {
-                                    RoundedRectangle(cornerRadius: 3)
-                                        .fill(Color.white)
-                                        .frame(width: 18, height: 18)
-                                } else {
-                                    Circle()
-                                        .fill(Color.white.opacity(0.9))
-                                        .frame(width: 18, height: 18)
+                // Status area - fixed height to prevent jumping
+                Group {
+                    if recorderManager.isRecording {
+                        VStack(spacing: 4) {
+                            Text(formatDuration(recorderManager.duration))
+                                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white)
+
+                            AudioWaveformView(
+                                micLevel: recorderManager.micLevel,
+                                systemLevel: recorderManager.systemLevel
+                            )
+                            .frame(height: 20)
+                            .padding(.horizontal, 30)
+                        }
+                    } else if recorderManager.isProcessing || recorderManager.isStarting {
+                        Text(" ")
+                            .font(.system(size: 12, weight: .medium))
+                    } else if let error = recorderManager.lastErrorMessage {
+                        Text(error)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.red.opacity(0.9))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                    } else {
+                        Text("Start Recording")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                }
+                .frame(height: 26)
+            }
+            .frame(height: 112)
+
+            Spacer(minLength: 0)
+
+            // Bottom buttons - fixed at bottom
+            VStack(spacing: 6) {
+                VStack(spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(secondaryText)
+                            .frame(width: 14, alignment: .center)
+
+                        TextField(
+                            "",
+                            text: $recorderManager.clientNameInput,
+                            prompt: Text("client name").foregroundColor(placeholderText)
+                        )
+                            .textFieldStyle(.plain)
+                            .font(labelFont)
+                            .foregroundColor(primaryText)
+                            .focused($isClientNameFocused)
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(6)
+                }
+
+                VStack(spacing: 4) {
+                    Menu {
+                        if recorderManager.microphoneDevices.isEmpty {
+                            Button("No microphones found") {}
+                                .disabled(true)
+                        } else {
+                            ForEach(recorderManager.microphoneDevices, id: \.uniqueID) { device in
+                                Button(action: {
+                                    recorderManager.setSelectedMicrophoneID(device.uniqueID)
+                                }) {
+                                    if device.uniqueID == recorderManager.selectedMicrophoneID {
+                                        Label(device.localizedName, systemImage: "checkmark")
+                                    } else {
+                                        Text(device.localizedName)
+                                    }
                                 }
                             }
-                            .scaleEffect(isHovering ? 1.08 : 1.0)
-                            .animation(.easeInOut(duration: 0.15), value: isHovering)
                         }
-                        .buttonStyle(.plain)
-                        .onHover { hovering in
-                            isHovering = hovering
-                        }
-                    }
-
-                    // Status area - fixed height to prevent jumping
-                    Group {
-                        if recorderManager.isRecording {
-                            VStack(spacing: 4) {
-                                Text(formatDuration(recorderManager.duration))
-                                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.white)
-
-                                AudioWaveformView(
-                                    micLevel: recorderManager.micLevel,
-                                    systemLevel: recorderManager.systemLevel
-                                )
-                                .frame(height: 20)
-                                .padding(.horizontal, 30)
-                            }
-                        } else if recorderManager.isProcessing {
-                            Text(" ")
-                                .font(.system(size: 12, weight: .medium))
-                        } else {
-                            Text("Start Recording")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.white.opacity(0.5))
-                        }
-                    }
-                    .frame(height: 40)
-                }
-                .frame(height: 120)
-
-                Spacer(minLength: 0)
-
-                // Bottom buttons - fixed at bottom
-                VStack(spacing: 5) {
-                    Button(action: {
-                        recorderManager.openRecordingsFolder()
-                    }) {
+                    } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 11))
-                            Text("Open Recordings")
+                            Image(systemName: "mic")
                                 .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(secondaryText)
+                                .frame(width: 14, alignment: .center)
+
+                            Text(selectedMicrophoneName)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(secondaryText)
                         }
-                        .foregroundColor(.white.opacity(isHoveringFolder ? 1.0 : 0.7))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(Color.white.opacity(isHoveringFolder ? 0.15 : 0.08))
-                        .cornerRadius(5)
+                        .font(labelFont)
+                        .foregroundColor(primaryText.opacity(0.8))
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(6)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .onHover { hovering in
-                        isHoveringFolder = hovering
-                    }
-
-                    Button(action: {
-                        recorderManager.chooseRecordingsFolder()
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "folder.badge.gearshape")
-                                .font(.system(size: 11))
-                            Text("Change Location...")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(.white.opacity(isHoveringLocation ? 1.0 : 0.7))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(Color.white.opacity(isHoveringLocation ? 0.15 : 0.08))
-                        .cornerRadius(5)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        isHoveringLocation = hovering
-                    }
-
-                    // Path display
-                    Text(recorderManager.recordingsPathDisplay)
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.4))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    .tint(.white)
+                    .frame(maxWidth: .infinity)
+                    .disabled(!hasMicrophones)
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 10)
+
+                Toggle(isOn: Binding(
+                    get: { recorderManager.showRecordingBorder },
+                    set: { recorderManager.setShowRecordingBorder($0) }
+                )) {
+                    Text("Show red border")
+                        .font(labelFont)
+                        .foregroundColor(primaryText.opacity(0.75))
+                }
+                .toggleStyle(.switch)
+                .tint(.red)
+
+                Button(action: {
+                    recorderManager.openRecordingsFolder()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11))
+                        Text("Open Recordings")
+                            .font(labelFont)
+                    }
+                    .foregroundColor(primaryText.opacity(isHoveringFolder ? 1.0 : 0.8))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(isHoveringFolder ? 0.15 : 0.08))
+                    .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    isHoveringFolder = hovering
+                }
+
+                Button(action: {
+                    recorderManager.chooseRecordingsFolder()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder.badge.gearshape")
+                            .font(.system(size: 11))
+                        Text("Change Location...")
+                            .font(labelFont)
+                    }
+                    .foregroundColor(primaryText.opacity(isHoveringLocation ? 1.0 : 0.8))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(isHoveringLocation ? 0.15 : 0.08))
+                    .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    isHoveringLocation = hovering
+                }
+
+                // Path display
+                Text(recorderManager.recordingsPathDisplay)
+                    .font(.system(size: 9))
+                    .foregroundColor(hintText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+            .onAppear {
+                DispatchQueue.main.async {
+                    isClientNameFocused = false
+                }
             }
         }
-        .frame(width: 220, height: 200)
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
