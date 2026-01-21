@@ -31,7 +31,7 @@ struct PopoverContentView: View {
     var body: some View {
             VStack(spacing: 0) {
             // Top section with button and status - fixed height
-            VStack(spacing: 4) {
+            VStack(spacing: 10) {
                 Spacer()
                     .frame(height: 0)
 
