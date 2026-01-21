@@ -198,7 +198,7 @@ export default function Page() {
       </main>
 
       <footer className="footer">
-        <a href="#">MIT License</a> · <a href="#">Contribute</a> · v1.0.0
+        <a href="#">MIT License</a> · <a href="#">Contribute</a> · v0.2.0
       </footer>
 
       <svg className="noise" xmlns="http://www.w3.org/2000/svg">
