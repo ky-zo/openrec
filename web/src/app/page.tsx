@@ -39,12 +39,24 @@ function FluarLogo({ className }: { className?: string }) {
 }
 
 function Waveform() {
-  // Generate random heights and animation properties for each bar
-  const bars = Array.from({ length: 50 }).map((_, i) => ({
-    height: 20 + Math.random() * 80, // Random height between 20-100%
-    delay: Math.random() * 2, // Random delay 0-2s
-    duration: 0.8 + Math.random() * 1.2, // Random duration 0.8-2s
-  }));
+  const totalBars = 50;
+  const center = totalBars / 2;
+
+  // Generate bars with bell curve distribution + randomness
+  const bars = Array.from({ length: totalBars }).map((_, i) => {
+    // Bell curve: taller in middle, shorter at edges
+    const distanceFromCenter = Math.abs(i - center) / center; // 0 at center, 1 at edges
+    const bellCurve = Math.cos(distanceFromCenter * Math.PI * 0.5); // 1 at center, 0 at edges
+    const baseHeight = 15 + bellCurve * 85; // 15-100% based on position
+    const randomVariation = (Math.random() - 0.5) * 30; // +/- 15% random
+    const height = Math.max(10, Math.min(100, baseHeight + randomVariation));
+
+    return {
+      height,
+      delay: Math.random() * 2,
+      duration: 0.6 + Math.random() * 1,
+    };
+  });
 
   return (
     <div className="waveform">
