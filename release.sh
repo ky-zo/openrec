@@ -58,14 +58,66 @@ if [ -n "$working_changes" ]; then
   esac
 fi
 
-read -r -p "Release version (e.g. v0.1.0 or 0.1.0): " input_version
-input_version="${input_version//[[:space:]]/}"
-if [ -z "$input_version" ]; then
-  echo "Version cannot be empty." >&2
-  exit 1
+current_version_raw="$(cat VERSION 2>/dev/null || echo "v0.0.0")"
+current_version="${current_version_raw#v}"
+valid_semver=0
+major=0
+minor=0
+patch=0
+
+if [[ "$current_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+  IFS='.' read -r major minor patch <<< "$current_version"
+  major="${major:-0}"
+  minor="${minor:-0}"
+  patch="${patch:-0}"
+  valid_semver=1
 fi
 
-version="${input_version#v}"
+if [ "$valid_semver" -eq 1 ]; then
+  echo "Current version: v${major}.${minor}.${patch}"
+  echo "Select release type:"
+  echo "  1) patch (v${major}.${minor}.$((patch + 1)))"
+  echo "  2) minor (v${major}.$((minor + 1)).0)"
+  echo "  3) major (v$((major + 1)).0.0)"
+  echo "  4) custom"
+  read -r -p "Choice [1]: " release_choice
+  release_choice="${release_choice//[[:space:]]/}"
+
+  case "$release_choice" in
+    ""|1|patch|Patch|p|P)
+      patch=$((patch + 1))
+      ;;
+    2|minor|Minor|mid|Mid)
+      minor=$((minor + 1))
+      patch=0
+      ;;
+    3|major|Major)
+      major=$((major + 1))
+      minor=0
+      patch=0
+      ;;
+    4|custom|Custom)
+      valid_semver=0
+      ;;
+    *)
+      echo "Invalid release type: $release_choice" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [ "$valid_semver" -eq 1 ]; then
+  version="${major}.${minor}.${patch}"
+else
+  read -r -p "Release version (e.g. v0.1.0 or 0.1.0): " input_version
+  input_version="${input_version//[[:space:]]/}"
+  if [ -z "$input_version" ]; then
+    echo "Version cannot be empty." >&2
+    exit 1
+  fi
+  version="${input_version#v}"
+fi
+
 tag="v$version"
 
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
