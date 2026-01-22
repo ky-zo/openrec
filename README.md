@@ -18,18 +18,16 @@ A lightweight macOS screen recorder that captures screen, system audio, and micr
 - Captures system audio (hear what others say in meetings)
 - Captures microphone audio (your voice)
 - Outputs to MP4 format (H.264 video, AAC audio)
-- Simple command-line interface
-- Graceful stop with Ctrl+C
+- Simple macOS app
 
 ## Requirements
 
-- macOS 12.3 or later (requires ScreenCaptureKit)
+- macOS 15.0 or later
 - Xcode Command Line Tools
 
 ## Download (latest)
 
-Apple Silicon (arm64):
-https://github.com/ky-zo/openrec/releases/latest/download/openrec-macos-arm64.zip
+https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg
 
 ## Installation
 
@@ -41,10 +39,7 @@ git clone git@github.com:ky-zo/openrec.git
 cd openrec
 
 # Build
-./build.sh
-
-# Run
-./openrec
+./build-app.sh
 ```
 
 ### First run permissions
@@ -57,18 +52,7 @@ You may also need to grant microphone access.
 
 ## Usage
 
-```bash
-# Start recording
-./openrec
-
-# Stop recording
-# Press Ctrl+C
-```
-
-Recordings are saved to the `recordings/` folder with timestamps:
-```
-recordings/meeting_2024-01-19_143022.mp4
-```
+Launch `OpenRec.app` and start recording from the floating control window.
 
 ## Output Format
 

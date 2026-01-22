@@ -1,14 +1,5 @@
-# Compiled binary
-meetrec
-openrec
-
 # Build artifacts
 dist/
-.module-cache/
-
-# Recordings (keep folder, ignore contents)
-Recordings/*
-!Recordings/.gitkeep
 
 # macOS
 .DS_Store

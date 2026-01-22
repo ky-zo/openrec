@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 function GithubIcon({ className }: { className?: string }) {
@@ -78,7 +78,6 @@ function Waveform() {
 }
 
 export default function Page() {
-  const cursorRef = useRef<HTMLDivElement>(null);
   const [stars, setStars] = useState<number | null>(null);
 
   useEffect(() => {
@@ -92,53 +91,8 @@ export default function Page() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    const cursor = cursorRef.current;
-    if (!cursor) return;
-
-    let mouseX = 0, mouseY = 0;
-    let cursorX = 0, cursorY = 0;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      mouseX = e.clientX;
-      mouseY = e.clientY;
-    };
-
-    const animate = () => {
-      const dx = mouseX - cursorX;
-      const dy = mouseY - cursorY;
-      cursorX += dx * 0.15;
-      cursorY += dy * 0.15;
-      cursor.style.left = cursorX - 10 + "px";
-      cursor.style.top = cursorY - 10 + "px";
-      requestAnimationFrame(animate);
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    animate();
-
-    const interactiveElements = document.querySelectorAll("a, button");
-    interactiveElements.forEach((el) => {
-      el.addEventListener("mouseenter", () => cursor.classList.add("active"));
-      el.addEventListener("mouseleave", () => cursor.classList.remove("active"));
-    });
-
-    const handleMouseDown = () => (cursor.style.transform = "scale(0.8)");
-    const handleMouseUp = () => (cursor.style.transform = "scale(1)");
-
-    document.addEventListener("mousedown", handleMouseDown);
-    document.addEventListener("mouseup", handleMouseUp);
-
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mousedown", handleMouseDown);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, []);
-
   return (
     <div className="landing-page">
-      <div ref={cursorRef} className="cursor" />
       <div className="gradient-orb orb-1" />
       <div className="gradient-orb orb-2" />
 
@@ -165,7 +119,7 @@ export default function Page() {
           <Button
             size="lg"
             className="btn-shadcn btn-shadcn-primary"
-            render={<a href="https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.zip" />}
+            render={<a href="https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg" />}
           >
             <DownloadIcon className="size-5" />
             Download
@@ -198,7 +152,7 @@ export default function Page() {
       </main>
 
       <footer className="footer">
-        <a href="#">MIT License</a> · <a href="#">Contribute</a> · v0.2.0
+        <a href="#">MIT License</a> · <a href="#">Contribute</a> · v0.2.1
       </footer>
 
       <svg className="noise" xmlns="http://www.w3.org/2000/svg">

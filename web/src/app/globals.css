@@ -25,13 +25,15 @@
 
 html {
   font-size: 16px;
+  height: 100%;
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100%;
 }
 
 .landing-page {
@@ -39,9 +41,12 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
-  overflow: hidden;
-  cursor: none;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 .top-bar {
@@ -49,7 +54,10 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  padding: 1.5rem 2rem;
+  padding: calc(1.5rem + env(safe-area-inset-top))
+    calc(2rem + env(safe-area-inset-right))
+    1.5rem
+    calc(2rem + env(safe-area-inset-left));
   z-index: 50;
   opacity: 0;
   animation: fadeIn 1s ease forwards;
@@ -89,25 +97,10 @@ body {
   }
 }
 
-.cursor {
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--text-muted);
-  border-radius: 50%;
-  position: fixed;
-  pointer-events: none;
-  z-index: 9999;
-  transition: transform 0.15s ease, border-color 0.3s ease;
-}
-
-.cursor.active {
-  transform: scale(1.5);
-  border-color: var(--accent);
-}
 
 main {
   text-align: center;
-  padding: 2rem;
+  padding: 6rem 2rem 5rem;
   max-width: 900px;
   width: 100%;
 }
@@ -201,7 +194,7 @@ h2 {
   height: 3rem !important;
   padding: 0 2rem !important;
   font-size: 1rem !important;
-  border-radius: 100px !important;
+  border-radius: 0.5rem !important;
   gap: 0.5rem !important;
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
   cursor: pointer !important;
@@ -323,7 +316,7 @@ h2 {
 
 .footer {
   position: fixed;
-  bottom: 2rem;
+  bottom: calc(2rem + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   font-size: 0.75rem;
@@ -368,7 +361,7 @@ h2 {
     align-items: center;
   }
 
-  .btn {
+  .btn-shadcn {
     width: 100%;
     max-width: 280px;
     justify-content: center;

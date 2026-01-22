@@ -66,11 +66,19 @@ cat > "$CONTENTS_DIR/Info.plist" << EOF
 </plist>
 EOF
 
-# Create DMG
+# Create DMG with Applications shortcut
 echo "Creating DMG..."
 DMG_NAME="OpenRec-$DISPLAY_VERSION.dmg"
+DMG_STAGING_DIR="dist/dmg-$DISPLAY_VERSION"
+rm -rf "$DMG_STAGING_DIR"
+mkdir -p "$DMG_STAGING_DIR"
+cp -R "$APP_DIR" "$DMG_STAGING_DIR/"
+ln -s /Applications "$DMG_STAGING_DIR/Applications"
+
 rm -f "dist/$DMG_NAME"
-hdiutil create -volname "$APP_NAME" -srcfolder "$APP_DIR" -ov -format UDZO "dist/$DMG_NAME"
+hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING_DIR" -ov -format UDZO "dist/$DMG_NAME"
+cp -f "dist/$DMG_NAME" "dist/OpenRec.dmg"
+rm -rf "$DMG_STAGING_DIR"
 
 echo ""
 echo "Build complete!"

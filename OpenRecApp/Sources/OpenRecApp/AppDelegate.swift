@@ -9,6 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let expandedSize = NSSize(width: 240, height: 350)
     private let collapsedSize = NSSize(width: 240, height: 86)
     private var pendingTerminate = false
+    private var updatePromptedThisSession = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         recorderManager = RecorderManager()
@@ -37,6 +38,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         setupControlWindow()
+
+        checkForUpdatesOnLaunch()
 
         // Show the control window on launch after the status item is ready.
         DispatchQueue.main.async {
@@ -136,6 +139,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         for buttonType in buttons {
             window.standardWindowButton(buttonType)?.isHidden = true
+        }
+    }
+
+    private func checkForUpdatesOnLaunch() {
+        guard let currentVersion = Bundle.main.shortVersionString else { return }
+
+        UpdateManager.checkForUpdate(currentVersion: currentVersion) { [weak self] info in
+            guard let self else { return }
+            guard let info else { return }
+
+            UpdateManager.downloadUpdate(from: info) { [weak self] localURL in
+                guard let self else { return }
+                guard let localURL else { return }
+
+                DispatchQueue.main.async {
+                    self.presentUpdateAlertIfNeeded(downloadURL: localURL, tag: info.tag)
+                }
+            }
+        }
+    }
+
+    private func presentUpdateAlertIfNeeded(downloadURL: URL, tag: String) {
+        guard !updatePromptedThisSession else { return }
+        updatePromptedThisSession = true
+
+        let versionLabel = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+
+        let alert = NSAlert()
+        alert.messageText = "New version available"
+        alert.informativeText = "OpenRec \(versionLabel) has been downloaded and is ready to install."
+        alert.addButton(withTitle: "Restart")
+        alert.addButton(withTitle: "Skip")
+        alert.alertStyle = .informational
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(downloadURL)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                NSApp.terminate(nil)
+            }
         }
     }
 }

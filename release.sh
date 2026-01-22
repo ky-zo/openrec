@@ -82,10 +82,10 @@ else
 fi
 git tag "$tag"
 
-if [ -x "./build.sh" ]; then
-  read -r -p "Run ./build.sh now? [y/N] " build_now
+if [ -x "./build-app.sh" ]; then
+  read -r -p "Run ./build-app.sh now? [y/N] " build_now
   case "$build_now" in
-    y|Y) ./build.sh ;;
+    y|Y) ./build-app.sh ;;
     *) ;;
   esac
 fi
