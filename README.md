@@ -12,37 +12,33 @@
 
 A lightweight macOS screen recorder that captures screen, system audio, and microphone. Perfect for recording meetings, tutorials, and presentations.
 
+## Download
+
+**[Download Latest Release](https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg)**
+
+The app is signed and notarized by Apple.
+
 ## Features
 
 - Records full screen at native resolution
 - Captures system audio (hear what others say in meetings)
 - Captures microphone audio (your voice)
 - Outputs to MP4 format (H.264 video, AAC audio)
-- Simple macOS app
+- Segment recording for long sessions
+- Simple floating control panel
+- Menu bar integration
 
 ## Requirements
 
 - macOS 15.0 or later
-- Xcode Command Line Tools
-
-## Download (latest)
-
-https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg
 
 ## Installation
 
-### Build from source
+1. Download [OpenRec.dmg](https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg)
+2. Open the DMG and drag OpenRec to Applications
+3. Launch OpenRec
 
-```bash
-# Clone the repo
-git clone git@github.com:ky-zo/openrec.git
-cd openrec
-
-# Build
-./build-app.sh
-```
-
-### First run permissions
+### First Run Permissions
 
 On first run, macOS will prompt for permissions. Grant them in:
 
@@ -50,9 +46,52 @@ On first run, macOS will prompt for permissions. Grant them in:
 
 You may also need to grant microphone access.
 
-## Usage
+## Building from Source
 
-Launch `OpenRec.app` and start recording from the floating control window.
+### Prerequisites
+
+- Xcode Command Line Tools
+- Apple Developer ID certificate (for distribution)
+
+### Quick Build (unsigned, for development)
+
+```bash
+cd OpenRecApp
+swift build
+.build/debug/OpenRecApp
+```
+
+### Signed & Notarized Build (for distribution)
+
+1. **Set up notarization credentials** (one-time):
+
+   Generate an app-specific password at [appleid.apple.com](https://appleid.apple.com/account/manage), then:
+
+   ```bash
+   xcrun notarytool store-credentials "openrec-notary" \
+     --apple-id "your@email.com" \
+     --team-id "YOUR_TEAM_ID" \
+     --password "xxxx-xxxx-xxxx-xxxx"
+   ```
+
+2. **Configure build** (optional):
+
+   ```bash
+   cp .env.example .env.build
+   # Edit .env.build if needed
+   ```
+
+3. **Build**:
+
+   ```bash
+   ./build-app.sh
+   ```
+
+   This will build, sign, create DMG, notarize, and staple.
+
+   Output:
+   - `dist/OpenRec.app`
+   - `dist/OpenRec-X.X.X.dmg`
 
 ## Output Format
 
