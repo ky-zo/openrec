@@ -1,10 +1,17 @@
 #!/bin/bash
 set -e
 
+# Load build configuration if present
+if [ -f ".env.build" ]; then
+  source .env.build
+fi
+
 VERSION=$(cat VERSION 2>/dev/null || echo "dev")
 DISPLAY_VERSION="${VERSION#v}"
 APP_NAME="OpenRec"
 BUNDLE_ID="com.fluar.openrec"
+SIGN_ID="${SIGN_ID:-}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-openrec-notary}"
 
 echo "Building $APP_NAME.app v$DISPLAY_VERSION..."
 
@@ -66,6 +73,23 @@ cat > "$CONTENTS_DIR/Info.plist" << EOF
 </plist>
 EOF
 
+# Optional signing
+if [ -z "$SIGN_ID" ]; then
+  SIGN_ID=$(security find-identity -v -p codesigning | awk -F\" '/Developer ID Application/{print $2; exit}')
+fi
+
+if [ -n "$SIGN_ID" ]; then
+  echo "Signing app with: $SIGN_ID"
+  codesign --force --deep --options runtime --timestamp \
+    --sign "$SIGN_ID" \
+    "$APP_DIR"
+  # Verify basic signature (strict check may fail before notarization)
+  codesign --verify "$APP_DIR"
+  echo "Signature verified."
+else
+  echo "Skipping signing (no Developer ID identity found)."
+fi
+
 # Create DMG with Applications shortcut
 echo "Creating DMG..."
 DMG_NAME="OpenRec-$DISPLAY_VERSION.dmg"
@@ -79,6 +103,16 @@ rm -f "dist/$DMG_NAME"
 hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING_DIR" -ov -format UDZO "dist/$DMG_NAME"
 cp -f "dist/$DMG_NAME" "dist/OpenRec.dmg"
 rm -rf "$DMG_STAGING_DIR"
+
+if [ -n "$NOTARY_PROFILE" ]; then
+  echo "Notarizing DMG..."
+  xcrun notarytool submit "dist/$DMG_NAME" --keychain-profile "$NOTARY_PROFILE" --wait
+  echo "Stapling notarization..."
+  xcrun stapler staple "$APP_DIR" >/dev/null
+  xcrun stapler staple "dist/$DMG_NAME" >/dev/null
+else
+  echo "Skipping notarization (NOTARY_PROFILE not set)."
+fi
 
 echo ""
 echo "Build complete!"

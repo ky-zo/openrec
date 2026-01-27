@@ -11,6 +11,13 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var systemAudioInput: AVAssetWriterInput?
     private var micAudioInput: AVAssetWriterInput?
+    private var segmentStartTime: CMTime?
+    private var segmentIndex = 0
+    private var segmentURLs: [URL] = []
+    private var segmentsDirectory: URL?
+    private let segmentDuration = CMTime(seconds: 120, preferredTimescale: 600)
+    private let writerQueue = DispatchQueue(label: "screenrec.writer")
+    private let segmentGroup = DispatchGroup()
 
     // Microphone capture
     private var micCaptureSession: AVCaptureSession?
@@ -33,6 +40,8 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     private let audioOutputURL: URL?
     private let micDevice: AVCaptureDevice?
     private(set) var recordingDisplayID: CGDirectDisplayID?
+    private var recordingWidth: Int = 0
+    private var recordingHeight: Int = 0
 
     init(outputURL: URL, audioOutputURL: URL?, micDevice: AVCaptureDevice?) {
         self.outputURL = outputURL
@@ -62,8 +71,23 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
 
-        // Setup asset writer
-        try setupAssetWriter(width: display.width, height: display.height)
+        recordingWidth = Int(display.width)
+        recordingHeight = Int(display.height)
+
+        // Prepare segments directory
+        let baseDir = outputURL.deletingLastPathComponent()
+        let segmentsDir = baseDir.appendingPathComponent("segments", isDirectory: true)
+        do {
+            try? FileManager.default.removeItem(at: segmentsDir)
+            try FileManager.default.createDirectory(at: segmentsDir, withIntermediateDirectories: true)
+            segmentsDirectory = segmentsDir
+        } catch {
+            throw RecorderError.setupFailed("Unable to create segments folder.")
+        }
+        segmentIndex = 0
+        segmentURLs = []
+        segmentStartTime = nil
+        sessionStarted = false
 
         // Setup microphone
         try setupMicrophone()
@@ -82,10 +106,10 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         isRecording = true
     }
 
-    private func setupAssetWriter(width: Int, height: Int) throws {
-        try? FileManager.default.removeItem(at: outputURL)
+    private func setupAssetWriter(for url: URL, width: Int, height: Int) throws {
+        try? FileManager.default.removeItem(at: url)
 
-        assetWriter = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+        assetWriter = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
         // Video input
         let videoSettings: [String: Any] = [
@@ -187,14 +211,21 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         Task {
             try? await stream?.stopCapture()
 
-            // Finish writing
-            videoInput?.markAsFinished()
-            systemAudioInput?.markAsFinished()
-            micAudioInput?.markAsFinished()
+            let segments = await finalizeSegments()
 
-            await assetWriter?.finishWriting()
+            if segments.isEmpty {
+                onComplete?()
+                return
+            }
 
-            if assetWriter?.status == .completed {
+            if segments.count == 1 {
+                try? FileManager.default.removeItem(at: outputURL)
+                try? FileManager.default.moveItem(at: segments[0], to: outputURL)
+            } else {
+                _ = await mergeSegments(segments, into: outputURL)
+            }
+
+            if FileManager.default.fileExists(atPath: outputURL.path) {
                 let hasFFmpeg = shellRun("which ffmpeg >/dev/null 2>&1")
 
                 // Merge audio tracks if ffmpeg is available
@@ -203,6 +234,8 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
                 if let audioOutputURL = audioOutputURL {
                     _ = exportAudioMp3(from: outputURL, to: audioOutputURL, ffmpegAvailable: hasFFmpeg)
                 }
+
+                cleanupSegments()
             }
 
             onComplete?()
@@ -306,28 +339,33 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     }
 
     private func handleVideoSample(_ sampleBuffer: CMSampleBuffer) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            return
-        }
+        writerQueue.async { [weak self] in
+            guard let self else { return }
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                return
+            }
 
-        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
-        if !sessionStarted {
-            assetWriter?.startWriting()
-            assetWriter?.startSession(atSourceTime: pts)
-            sessionStarted = true
-        }
+            do {
+                try self.ensureSegment(for: pts)
+            } catch {
+                return
+            }
 
-        if videoInput?.isReadyForMoreMediaData == true {
-            pixelBufferAdaptor?.append(pixelBuffer, withPresentationTime: pts)
+            if self.videoInput?.isReadyForMoreMediaData == true {
+                self.pixelBufferAdaptor?.append(pixelBuffer, withPresentationTime: pts)
+            }
         }
     }
 
     private func handleSystemAudioSample(_ sampleBuffer: CMSampleBuffer) {
-        guard sessionStarted else { return }
-
-        if systemAudioInput?.isReadyForMoreMediaData == true {
-            systemAudioInput?.append(sampleBuffer)
+        writerQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.sessionStarted else { return }
+            if self.systemAudioInput?.isReadyForMoreMediaData == true {
+                self.systemAudioInput?.append(sampleBuffer)
+            }
         }
 
         // Calculate and report audio level
@@ -343,10 +381,14 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     // MARK: - AVCaptureAudioDataOutputSampleBufferDelegate
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard isRecording, sessionStarted else { return }
+        guard isRecording else { return }
 
-        if micAudioInput?.isReadyForMoreMediaData == true {
-            micAudioInput?.append(sampleBuffer)
+        writerQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.sessionStarted else { return }
+            if self.micAudioInput?.isReadyForMoreMediaData == true {
+                self.micAudioInput?.append(sampleBuffer)
+            }
         }
 
         // Calculate and store mic level
@@ -366,7 +408,192 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         }
         stop()
     }
+
+    private func ensureSegment(for pts: CMTime) throws {
+        if let segmentStartTime {
+            let elapsed = CMTimeSubtract(pts, segmentStartTime)
+            if elapsed >= segmentDuration {
+                finalizeCurrentSegment()
+                try startNewSegment(at: pts)
+                return
+            }
+        }
+
+        if !sessionStarted {
+            try startNewSegment(at: pts)
+        }
+    }
+
+    private func startNewSegment(at pts: CMTime) throws {
+        guard let segmentsDirectory else {
+            return
+        }
+
+        segmentIndex += 1
+        let filename = String(format: "segment_%04d.mp4", segmentIndex)
+        let segmentURL = segmentsDirectory.appendingPathComponent(filename)
+
+        try setupAssetWriter(for: segmentURL, width: recordingWidth, height: recordingHeight)
+        segmentURLs.append(segmentURL)
+
+        assetWriter?.startWriting()
+        assetWriter?.startSession(atSourceTime: pts)
+        segmentStartTime = pts
+        sessionStarted = true
+    }
+
+    private func finalizeCurrentSegment() {
+        guard sessionStarted, let writer = assetWriter else { return }
+
+        videoInput?.markAsFinished()
+        systemAudioInput?.markAsFinished()
+        micAudioInput?.markAsFinished()
+
+        segmentGroup.enter()
+        writer.finishWriting { [weak self] in
+            self?.segmentGroup.leave()
+        }
+
+        assetWriter = nil
+        videoInput = nil
+        pixelBufferAdaptor = nil
+        systemAudioInput = nil
+        micAudioInput = nil
+        segmentStartTime = nil
+        sessionStarted = false
+    }
+
+    private func finalizeSegments() async -> [URL] {
+        await withCheckedContinuation { continuation in
+            writerQueue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                self.finalizeCurrentSegment()
+                let urls = self.segmentURLs
+                self.segmentGroup.notify(queue: self.writerQueue) {
+                    continuation.resume(returning: urls)
+                }
+            }
+        }
+    }
+
+    private func mergeSegments(_ segments: [URL], into outputURL: URL) async -> Bool {
+        let composition = AVMutableComposition()
+        guard let compositionVideo = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            return false
+        }
+        let compositionSystemAudio = composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        )
+        let compositionMicAudio = composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        )
+
+        var currentTime = CMTime.zero
+        var appliedVideoTransform = false
+
+        for url in segments {
+            let asset = AVAsset(url: url)
+            let duration: CMTime
+            do {
+                duration = try await asset.load(.duration)
+            } catch {
+                return false
+            }
+
+            let videoTracks: [AVAssetTrack]
+            do {
+                videoTracks = try await asset.loadTracks(withMediaType: .video)
+            } catch {
+                return false
+            }
+
+            if let videoTrack = videoTracks.first {
+                let timeRange: CMTimeRange
+                do {
+                    timeRange = try await videoTrack.load(.timeRange)
+                } catch {
+                    return false
+                }
+
+                do {
+                    try compositionVideo.insertTimeRange(timeRange, of: videoTrack, at: currentTime)
+                    if !appliedVideoTransform {
+                        let transform = try await videoTrack.load(.preferredTransform)
+                        compositionVideo.preferredTransform = transform
+                        appliedVideoTransform = true
+                    }
+                } catch {
+                    return false
+                }
+            }
+
+            let audioTracks: [AVAssetTrack]
+            do {
+                audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            } catch {
+                return false
+            }
+
+            if let systemTrack = audioTracks.first, let compositionSystemAudio {
+                let timeRange: CMTimeRange
+                do {
+                    timeRange = try await systemTrack.load(.timeRange)
+                } catch {
+                    return false
+                }
+                do {
+                    try compositionSystemAudio.insertTimeRange(timeRange, of: systemTrack, at: currentTime)
+                } catch {
+                    return false
+                }
+            }
+
+            if audioTracks.count > 1, let compositionMicAudio {
+                let micTrack = audioTracks[1]
+                let timeRange: CMTimeRange
+                do {
+                    timeRange = try await micTrack.load(.timeRange)
+                } catch {
+                    return false
+                }
+                do {
+                    try compositionMicAudio.insertTimeRange(timeRange, of: micTrack, at: currentTime)
+                } catch {
+                    return false
+                }
+            }
+
+            currentTime = CMTimeAdd(currentTime, duration)
+        }
+
+        try? FileManager.default.removeItem(at: outputURL)
+        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
+            return false
+        }
+        export.outputURL = outputURL
+        export.outputFileType = .mp4
+        export.shouldOptimizeForNetworkUse = false
+
+        await export.export()
+        return export.status == .completed
+    }
+
+    private func cleanupSegments() {
+        guard let segmentsDirectory else { return }
+        try? FileManager.default.removeItem(at: segmentsDirectory)
+    }
 }
+
+// Access is synchronized via writerQueue/audio locks; safe for @unchecked Sendable.
+extension ScreenRecorder: @unchecked Sendable {}
 
 // MARK: - Error Types
 
