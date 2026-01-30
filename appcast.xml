@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>OpenRec Updates</title>
+        <link>https://github.com/ky-zo/openrec/releases</link>
+        <description>Most recent updates to OpenRec</description>
+        <language>en</language>
+
+        <item>
+            <title>Version 0.2.4</title>
+            <pubDate>Thu, 30 Jan 2026 12:00:00 +0000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.2.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[
+                <h2>What's New in 0.2.4</h2>
+                <ul>
+                    <li>Migrated to native Xcode project</li>
+                    <li>Added Sparkle for automatic updates</li>
+                    <li>Improved code signing and notarization</li>
+                </ul>
+            ]]></description>
+            <enclosure
+                url="https://api.amore.computer/v1/apps/com.fluar.openrec/download"
+                sparkle:edSignature="SIGNATURE_PLACEHOLDER"
+                length="0"
+                type="application/octet-stream"/>
+        </item>
+
+    </channel>
+</rss>

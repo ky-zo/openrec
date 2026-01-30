@@ -80,12 +80,14 @@ fi
 
 if [ -n "$SIGN_ID" ]; then
   echo "Signing app with: $SIGN_ID"
-  codesign --force --deep --options runtime --timestamp \
+  codesign --force --options runtime --timestamp \
+    --entitlements "OpenRecApp/OpenRec.entitlements" \
     --sign "$SIGN_ID" \
     "$APP_DIR"
-  # Verify basic signature (strict check may fail before notarization)
   codesign --verify "$APP_DIR"
-  echo "Signature verified."
+  # Verify entitlements were applied
+  echo "Verifying entitlements..."
+  codesign -d --entitlements :- "$APP_DIR/Contents/MacOS/$APP_NAME" 2>/dev/null | grep -q "audio-input" && echo "Entitlements OK" || echo "WARNING: Entitlements missing"
 else
   echo "Skipping signing (no Developer ID identity found)."
 fi

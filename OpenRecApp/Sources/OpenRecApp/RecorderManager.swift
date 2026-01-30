@@ -249,10 +249,11 @@ class RecorderManager: ObservableObject {
 
     private func startErrorMessage(from error: Error) -> String {
         let nsError = error as NSError
-        if nsError.domain.contains("ScreenCaptureKit") {
+        print("Recording error: domain=\(nsError.domain) code=\(nsError.code) desc=\(error.localizedDescription)")
+        if nsError.domain.contains("ScreenCaptureKit") && nsError.code == -3801 {
             return "Screen Recording permission is required."
         }
-        return "Failed to start recording."
+        return "Error: \(error.localizedDescription)"
     }
 
     private func revealRecordingIfNeeded() {
