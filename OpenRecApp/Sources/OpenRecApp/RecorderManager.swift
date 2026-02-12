@@ -17,12 +17,17 @@ class RecorderManager: ObservableObject {
     @Published var microphoneDevices: [AVCaptureDevice] = []
     @Published var selectedMicrophoneID: String?
 
+    let transcriptionManager = TranscriptionManager()
+
     private var recorder: ScreenRecorder?
     private var durationTimer: Timer?
     private var recordingStartTime: Date?
     private let overlayWindow = RecordingOverlayWindow()
     private var lastRecordingURL: URL?
+    private var lastOutputDir: URL?
     private var revealAfterSave = false
+    private var audioMixerRef: AudioMixer?
+    private var cancellables = Set<AnyCancellable>()
 
     var onRecordingStateChange: ((Bool) -> Void)?
     var onProcessingComplete: (() -> Void)?
@@ -60,6 +65,12 @@ class RecorderManager: ObservableObject {
             clientNameInput = last
         }
         refreshMicrophones()
+
+        // Forward nested ObservableObject changes so views refresh
+        transcriptionManager.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
     }
 
     func startRecording() async {
@@ -93,6 +104,7 @@ class RecorderManager: ObservableObject {
         let outputURL = outputDir.appendingPathComponent("\(baseName).mp4")
         let audioURL = outputDir.appendingPathComponent("\(baseName).mp3")
         lastRecordingURL = outputURL
+        lastOutputDir = outputDir
 
         let mic = selectedMicrophoneDevice() ?? AVCaptureDevice.default(for: .audio)
 
@@ -107,13 +119,41 @@ class RecorderManager: ObservableObject {
             }
         }
 
+        // Set up audio forwarding for transcription
+        recorder?.onSystemAudioSample = { [weak self] sampleBuffer in
+            self?.audioMixerRef?.appendSystemAudio(sampleBuffer)
+        }
+        recorder?.onMicAudioSample = { [weak self] sampleBuffer in
+            self?.audioMixerRef?.appendMicAudio(sampleBuffer)
+        }
+
         // Set up completion callback
         recorder?.onComplete = { [weak self] in
             Task { @MainActor in
-                self?.isProcessing = false
-                self?.overlayWindow.hide()
-                self?.revealRecordingIfNeeded()
-                self?.onProcessingComplete?()
+                guard let self else { return }
+
+                // Save live transcript if we have segments
+                if self.transcriptionManager.mode == .live && !self.transcriptionManager.committedSegments.isEmpty {
+                    if let dir = self.lastOutputDir, let url = self.lastRecordingURL {
+                        let baseName = url.deletingPathExtension().lastPathComponent
+                        self.transcriptionManager.saveTranscript(to: dir, baseName: baseName)
+                    }
+                }
+
+                // Trigger post-recording transcription
+                if self.transcriptionManager.mode == .postRecording && self.transcriptionManager.hasAPIKey {
+                    if let url = self.lastRecordingURL, let dir = self.lastOutputDir {
+                        self.transcriptionManager.transcribeRecording(audioURL: url, outputDir: dir)
+                    }
+                }
+
+                // Fire a single tips request after post-recording transcription completes
+                // (handled in TranscriptionManager.transcribeRecording completion)
+
+                self.isProcessing = false
+                self.overlayWindow.hide()
+                self.revealRecordingIfNeeded()
+                self.onProcessingComplete?()
             }
         }
 
@@ -126,6 +166,19 @@ class RecorderManager: ObservableObject {
             onRecordingStateChange?(true)
             if showRecordingBorder {
                 overlayWindow.show(displayID: recorder?.recordingDisplayID)
+            }
+
+            // Start live transcription if enabled
+            if transcriptionManager.mode == .live && transcriptionManager.hasAPIKey {
+                transcriptionManager.startLiveTranscription()
+                audioMixerRef = transcriptionManager.getAudioMixer()
+                if transcriptionManager.hasOpenRouterKey {
+                    transcriptionManager.callTipsManager.start(transcriptionManager: transcriptionManager)
+                }
+            } else if transcriptionManager.mode == .postRecording && transcriptionManager.hasAPIKey {
+                // Start audio mixer for energy tracking even in post-recording mode
+                transcriptionManager.startEnergyTracking()
+                audioMixerRef = transcriptionManager.getAudioMixer()
             }
 
             // Start duration timer
@@ -148,6 +201,17 @@ class RecorderManager: ObservableObject {
         durationTimer?.invalidate()
         durationTimer = nil
 
+        // Stop tips manager
+        transcriptionManager.callTipsManager.stop()
+
+        // Stop live transcription or energy tracking
+        if transcriptionManager.isTranscribing {
+            transcriptionManager.stopLiveTranscription()
+        } else if audioMixerRef != nil {
+            transcriptionManager.stopEnergyTracking()
+        }
+        audioMixerRef = nil
+
         isRecording = false
         isProcessing = true
         duration = 0
@@ -157,6 +221,11 @@ class RecorderManager: ObservableObject {
         onRecordingStateChange?(false)
         overlayWindow.hide()
         revealAfterSave = true
+
+        // Hide transcript/tips panels when live recording stops
+        if transcriptionManager.mode == .live {
+            transcriptionManager.showPanel = false
+        }
 
         recorder?.stop()
     }

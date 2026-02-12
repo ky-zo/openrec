@@ -1,15 +1,22 @@
 import AppKit
 import SwiftUI
+import Combine
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var recorderManager: RecorderManager!
     private var controlWindow: NSWindow?
     private let windowState = WindowState()
-    private let expandedSize = NSSize(width: 240, height: 350)
-    private let collapsedSize = NSSize(width: 240, height: 86)
+    private let mainWidth: CGFloat = 240
+    private let transcriptWidth: CGFloat = 281 // 280 + 1 for divider
+    private let expandedHeight: CGFloat = 400
+    private let recordingHeight: CGFloat = 76 // header + compact controls row
+    private let recordingExpandedHeight: CGFloat = 140 // slightly taller when transcript panel open
+    private let collapsedHeight: CGFloat = 86
     private var pendingTerminate = false
     private var updatePromptedThisSession = false
+    private var cancellables = Set<AnyCancellable>()
+    private var resizeWorkItem: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         recorderManager = RecorderManager()
@@ -23,20 +30,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
         }
 
-        // Observe recording state changes to update icon
+        // Observe recording state changes to update icon and resize
         recorderManager.onRecordingStateChange = { [weak self] isRecording in
             DispatchQueue.main.async {
-                self?.updateStatusIcon(isRecording: isRecording)
+                guard let self else { return }
+                self.updateStatusIcon(isRecording: isRecording)
+                // Don't auto-show transcript panel — user controls it via expand button
+                self.recalculateWindowSize(animated: true)
             }
         }
         recorderManager.onProcessingComplete = { [weak self] in
-            self?.finishPendingTerminationIfNeeded()
+            guard let self else { return }
+            self.finishPendingTerminationIfNeeded()
         }
 
-        windowState.onCollapseChange = { [weak self] collapsed in
-            self?.updateWindowSize(collapsed: collapsed, animated: true)
+        // Show transcript panel when post-recording transcription starts
+        recorderManager.transcriptionManager.$isTranscribing
+            .removeDuplicates()
+            .sink { [weak self] isTranscribing in
+                guard let self else { return }
+                if isTranscribing && self.recorderManager.transcriptionManager.mode == .postRecording {
+                    self.recorderManager.transcriptionManager.showPanel = true
+                }
+                DispatchQueue.main.async {
+                    self.recalculateWindowSize(animated: true)
+                }
+            }
+            .store(in: &cancellables)
+
+        // Observe showPanel changes — user-initiated, skip debounce
+        recorderManager.transcriptionManager.$showPanel
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.performResize(animated: true)
+            }
+            .store(in: &cancellables)
+
+        // Observe mode changes — right panel visibility depends on mode
+        recorderManager.transcriptionManager.$mode
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.recalculateWindowSize(animated: true)
+            }
+            .store(in: &cancellables)
+
+        windowState.onCollapseChange = { [weak self] _ in
+            // Collapse is user-initiated — skip debounce for instant response
+            self?.performResize(animated: true)
         }
 
+        setupEditMenu()
         setupControlWindow()
 
         checkForUpdatesOnLaunch()
@@ -84,7 +129,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupControlWindow() {
-        let rect = NSRect(origin: .zero, size: expandedSize)
+        let size = NSSize(width: mainWidth, height: expandedHeight)
+        let rect = NSRect(origin: .zero, size: size)
         let window = NSWindow(
             contentRect: rect,
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -103,6 +149,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.hasShadow = true
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
 
+        // Hide from screen sharing and screen recording
+        window.sharingType = .none
+
         window.contentView = NSHostingView(
             rootView: FloatingPanelView(
                 recorderManager: recorderManager,
@@ -116,23 +165,111 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         controlWindow = window
     }
 
-    private func updateWindowSize(collapsed: Bool, animated: Bool) {
+    /// Single method that computes window size from all relevant state.
+    /// Debounced so rapid-fire observer callbacks coalesce into one smooth resize.
+    private func recalculateWindowSize(animated: Bool) {
+        resizeWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.performResize(animated: animated)
+        }
+        resizeWorkItem = item
+        if animated {
+            // Tiny delay to coalesce multiple state changes into one animation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: item)
+        } else {
+            DispatchQueue.main.async(execute: item)
+        }
+    }
+
+    private func performResize(animated: Bool) {
         guard let window = controlWindow else { return }
-        let targetSize = collapsed ? collapsedSize : expandedSize
+        let collapsed = windowState.isCollapsed
+
+        let (targetWidth, targetHeight) = MainActor.assumeIsolated { () -> (CGFloat, CGFloat) in
+            let tm = recorderManager.transcriptionManager
+            let isRecording = recorderManager.isRecording
+
+            // Right panel: during recording, user-controlled; otherwise auto when mode != .off
+            let showingRightPanel = !collapsed && tm.mode != .off && (isRecording ? tm.showPanel : true)
+
+            // Tips show independently of right panel during recording
+            let showingTips: Bool = {
+                if collapsed { return false }
+                if !tm.hasOpenRouterKey { return false }
+                if isRecording && tm.mode == .live && tm.hasAPIKey { return true }
+                if tm.isTranscribing { return true }
+                if tm.showPanel && !tm.committedSegments.isEmpty { return true }
+                return false
+            }()
+
+            let currentTipsHeight: CGFloat
+            if showingTips {
+                currentTipsHeight = isRecording ? 201 : 141 // content + 1px divider
+            } else {
+                currentTipsHeight = 0
+            }
+
+            let baseHeight: CGFloat
+            if isRecording {
+                baseHeight = showingRightPanel ? recordingExpandedHeight : recordingHeight
+            } else {
+                baseHeight = expandedHeight
+            }
+            let w = mainWidth + (showingRightPanel ? transcriptWidth : 0)
+            let h = collapsed ? collapsedHeight : baseHeight + currentTipsHeight
+            return (w, h)
+        }
+
         let frame = window.frame
         let newFrame = NSRect(
             x: frame.origin.x,
-            y: frame.origin.y + frame.height - targetSize.height,
-            width: targetSize.width,
-            height: targetSize.height
+            y: frame.origin.y + frame.height - targetHeight,
+            width: targetWidth,
+            height: targetHeight
         )
-        window.setFrame(newFrame, display: true, animate: animated)
+
+        // Skip if already at target size
+        guard !frame.equalTo(newFrame) else { return }
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+                window.animator().setFrame(newFrame, display: true)
+            }
+        } else {
+            window.setFrame(newFrame, display: true)
+        }
     }
 
     private func finishPendingTerminationIfNeeded() {
         guard pendingTerminate else { return }
         pendingTerminate = false
         NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
+    private func setupEditMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit OpenRec", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     private func configureTrafficLights(for window: NSWindow) {

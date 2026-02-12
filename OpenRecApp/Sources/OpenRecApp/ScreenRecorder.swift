@@ -34,6 +34,8 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
     private var _systemLevel: Float = 0
 
     var onAudioLevels: ((Float, Float) -> Void)?
+    var onSystemAudioSample: ((CMSampleBuffer) -> Void)?
+    var onMicAudioSample: ((CMSampleBuffer) -> Void)?
     var onComplete: (() -> Void)?
 
     private let outputURL: URL
@@ -117,7 +119,7 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 8_000_000,
+                AVVideoAverageBitRateKey: 3_000_000,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
             ]
         ]
@@ -228,8 +230,8 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
             if FileManager.default.fileExists(atPath: outputURL.path) {
                 let hasFFmpeg = shellRun("which ffmpeg >/dev/null 2>&1")
 
-                // Merge audio tracks if ffmpeg is available
-                await mergeAudioTracks(at: outputURL, ffmpegAvailable: hasFFmpeg)
+                // Normalize and merge audio tracks if ffmpeg is available
+                await processRecording(at: outputURL, ffmpegAvailable: hasFFmpeg)
 
                 if let audioOutputURL = audioOutputURL {
                     _ = exportAudioMp3(from: outputURL, to: audioOutputURL, ffmpegAvailable: hasFFmpeg)
@@ -242,29 +244,37 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         }
     }
 
-    private func mergeAudioTracks(at url: URL, ffmpegAvailable: Bool) async {
+    private func processRecording(at url: URL, ffmpegAvailable: Bool) async {
         guard ffmpegAvailable else { return }
 
-        // Check if file has 2 audio tracks using ffprobe
         let probeCmd = "ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 '\(url.path)' 2>/dev/null | wc -l"
         let trackCount = Int(shellOutput(probeCmd).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-        guard trackCount >= 2 else {
-            return // Only one audio track, no merge needed
+        guard trackCount >= 1 else { return }
+
+        let tempPath = url.deletingLastPathComponent().appendingPathComponent("temp_processed.mp4").path
+
+        let ffmpegCmd: String
+        if trackCount >= 2 {
+            // Normalize each audio track, mix together, copy video
+            ffmpegCmd = """
+                ffmpeg -y -i '\(url.path)' \
+                -filter_complex '[0:a:0]loudnorm=I=-16:TP=-1.5:LRA=11[sys];[0:a:1]loudnorm=I=-16:TP=-1.5:LRA=11[mic];[sys][mic]amix=inputs=2:duration=longest[aout]' \
+                -map 0:v -map '[aout]' \
+                -c:v copy -c:a aac -b:a 192k \
+                '\(tempPath)' </dev/null >/dev/null 2>&1
+                """
+        } else {
+            // Single audio track: normalize it, copy video
+            ffmpegCmd = """
+                ffmpeg -y -i '\(url.path)' \
+                -filter_complex '[0:a:0]loudnorm=I=-16:TP=-1.5:LRA=11[aout]' \
+                -map 0:v -map '[aout]' \
+                -c:v copy -c:a aac -b:a 192k \
+                '\(tempPath)' </dev/null >/dev/null 2>&1
+                """
         }
 
-        let tempPath = url.deletingLastPathComponent().appendingPathComponent("temp_merged.mp4").path
-
-        // ffmpeg command to mix both audio tracks
-        let mergeCmd = """
-            ffmpeg -y -i '\(url.path)' \
-            -filter_complex '[0:a:0][0:a:1]amix=inputs=2:duration=longest[aout]' \
-            -map 0:v -map '[aout]' \
-            -c:v copy -c:a aac -b:a 192k \
-            '\(tempPath)' </dev/null >/dev/null 2>&1
-            """
-
-        let success = shellRun(mergeCmd)
-
+        let success = shellRun(ffmpegCmd)
         if success {
             try? FileManager.default.removeItem(at: url)
             try? FileManager.default.moveItem(atPath: tempPath, toPath: url.path)
@@ -376,6 +386,7 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         audioLevelLock.unlock()
 
         onAudioLevels?(micLevel, level)
+        onSystemAudioSample?(sampleBuffer)
     }
 
     // MARK: - AVCaptureAudioDataOutputSampleBufferDelegate
@@ -396,6 +407,8 @@ class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudio
         audioLevelLock.lock()
         _micLevel = level
         audioLevelLock.unlock()
+
+        onMicAudioSample?(sampleBuffer)
     }
 
     // MARK: - SCStreamDelegate

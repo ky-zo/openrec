@@ -6,6 +6,7 @@ struct PopoverContentView: View {
     @State private var isHovering = false
     @State private var isHoveringFolder = false
     @State private var isHoveringLocation = false
+    @State private var isHoveringTranscription = false
     @FocusState private var isClientNameFocused: Bool
     private let primaryText = Color.white.opacity(0.9)
     private let secondaryText = Color.white.opacity(0.6)
@@ -38,8 +39,7 @@ struct PopoverContentView: View {
                 // Record/Stop Button or Processing indicator
                 if recorderManager.isProcessing || recorderManager.isStarting {
                     VStack(spacing: 8) {
-                        ProgressView()
-                            .scaleEffect(0.8)
+                        ASCIISpinner(size: 22)
                             .frame(width: 48, height: 48)
 
                         Text(recorderManager.isProcessing ? "Saving..." : "Starting...")
@@ -118,27 +118,29 @@ struct PopoverContentView: View {
 
             // Bottom buttons - fixed at bottom
             VStack(spacing: 6) {
-                VStack(spacing: 4) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(secondaryText)
-                            .frame(width: 14, alignment: .center)
+                if !recorderManager.isRecording {
+                    VStack(spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(secondaryText)
+                                .frame(width: 14, alignment: .center)
 
-                        TextField(
-                            "",
-                            text: $recorderManager.clientNameInput,
-                            prompt: Text("client name").foregroundColor(placeholderText)
-                        )
-                            .textFieldStyle(.plain)
-                            .font(labelFont)
-                            .foregroundColor(primaryText)
-                            .focused($isClientNameFocused)
+                            TextField(
+                                "",
+                                text: $recorderManager.clientNameInput,
+                                prompt: Text("client name").foregroundColor(placeholderText)
+                            )
+                                .textFieldStyle(.plain)
+                                .font(labelFont)
+                                .foregroundColor(primaryText)
+                                .focused($isClientNameFocused)
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(6)
                     }
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 8)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(6)
                 }
 
                 VStack(spacing: 4) {
@@ -200,52 +202,62 @@ struct PopoverContentView: View {
                 .toggleStyle(.switch)
                 .tint(.red)
 
-                Button(action: {
-                    recorderManager.openRecordingsFolder()
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 11))
-                        Text("Open Recordings")
-                            .font(labelFont)
-                    }
-                    .foregroundColor(primaryText.opacity(isHoveringFolder ? 1.0 : 0.8))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(isHoveringFolder ? 0.15 : 0.08))
-                    .cornerRadius(5)
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    isHoveringFolder = hovering
-                }
+                if !recorderManager.isRecording {
+                    // Transcription Mode — segmented tabs
+                    TranscriptionModePicker(
+                        selection: Binding(
+                            get: { recorderManager.transcriptionManager.mode },
+                            set: { recorderManager.transcriptionManager.mode = $0 }
+                        )
+                    )
 
-                Button(action: {
-                    recorderManager.chooseRecordingsFolder()
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder.badge.gearshape")
-                            .font(.system(size: 11))
-                        Text("Change Location...")
-                            .font(labelFont)
+                    Button(action: {
+                        recorderManager.openRecordingsFolder()
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 11))
+                            Text("Open Recordings")
+                                .font(labelFont)
+                        }
+                        .foregroundColor(primaryText.opacity(isHoveringFolder ? 1.0 : 0.8))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(isHoveringFolder ? 0.15 : 0.08))
+                        .cornerRadius(5)
                     }
-                    .foregroundColor(primaryText.opacity(isHoveringLocation ? 1.0 : 0.8))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(isHoveringLocation ? 0.15 : 0.08))
-                    .cornerRadius(5)
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    isHoveringLocation = hovering
-                }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        isHoveringFolder = hovering
+                    }
 
-                // Path display
-                Text(recorderManager.recordingsPathDisplay)
-                    .font(.system(size: 9))
-                    .foregroundColor(hintText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    Button(action: {
+                        recorderManager.chooseRecordingsFolder()
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "folder.badge.gearshape")
+                                .font(.system(size: 11))
+                            Text("Change Location...")
+                                .font(labelFont)
+                        }
+                        .foregroundColor(primaryText.opacity(isHoveringLocation ? 1.0 : 0.8))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(isHoveringLocation ? 0.15 : 0.08))
+                        .cornerRadius(5)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        isHoveringLocation = hovering
+                    }
+
+                    // Path display
+                    Text(recorderManager.recordingsPathDisplay)
+                        .font(.system(size: 9))
+                        .foregroundColor(hintText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
@@ -290,6 +302,38 @@ struct AudioWaveformView: View {
                 )
             }
         }
+    }
+}
+
+// MARK: - Transcription Mode Picker
+
+private struct TranscriptionModePicker: View {
+    @Binding var selection: TranscriptionMode
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(TranscriptionMode.allCases, id: \.self) { mode in
+                let isSelected = mode == selection
+                Button {
+                    selection = mode
+                } label: {
+                    Text(mode.rawValue)
+                        .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? .white : .white.opacity(0.45))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(isSelected ? Color.white.opacity(0.14) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Color.white.opacity(0.06))
+        .cornerRadius(7)
     }
 }
 
