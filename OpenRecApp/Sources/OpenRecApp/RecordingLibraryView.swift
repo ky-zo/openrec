@@ -1326,9 +1326,12 @@ private struct StatusBanner: View {
     let color: Color
 
     var body: some View {
+        // Errors recorded before body sanitation existed can be entire web
+        // pages; never let a banner grow past a few lines.
         Label(message, systemImage: icon)
             .font(.system(size: 11, weight: .medium))
             .foregroundColor(color.opacity(0.95))
+            .lineLimit(6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(11)
             .background(color.opacity(0.1))
