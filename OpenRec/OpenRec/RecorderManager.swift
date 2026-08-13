@@ -134,6 +134,13 @@ final class RecorderManager: ObservableObject {
     @Published var detectedCall: DetectedCall?
     @Published var lastSavedMeetingID: UUID?
     @Published private(set) var cloudUploadProgress: MediaStreamingProgress?
+    struct ReadyUpdate: Equatable {
+        let version: String
+        let localURL: URL
+    }
+
+    /// A newer OpenRec version, already downloaded and ready to install.
+    @Published var readyUpdate: ReadyUpdate?
     @Published private(set) var upcomingEvents: [UpcomingCalendarEvent] = []
     @Published private(set) var isLoadingUpcomingEvents = false
     /// True when the Google Calendar feed answered the last refresh — i.e. the
@@ -264,6 +271,16 @@ final class RecorderManager: ObservableObject {
                     let key = "\(event.title.lowercased())|\(Int(event.start.timeIntervalSince1970 / 60))"
                     return seen.insert(key).inserted
                 }
+        }
+    }
+
+    /// Open the downloaded update and quit so the user can drag the new
+    /// version into place.
+    func installReadyUpdate() {
+        guard let readyUpdate else { return }
+        NSWorkspace.shared.open(readyUpdate.localURL)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NSApp.terminate(nil)
         }
     }
 

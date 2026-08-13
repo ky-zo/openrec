@@ -46,6 +46,12 @@ struct UpdateManager {
     private static let releaseAPIURL = URL(
         string: "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases/latest"
     )!
+    /// Releases are published through Amore; its Sparkle appcast is the
+    /// source of truth. GitHub releases remain only as a fallback for old
+    /// installs from before the switch.
+    private static let appcastURL = URL(
+        string: "https://api.amore.computer/v1/apps/app.openrec.mac/appcast.xml"
+    )!
 
     static func checkForUpdate(currentVersion: String, completion: @escaping (UpdateInfo?) -> Void) {
         guard let current = Version(currentVersion) else {
@@ -53,13 +59,68 @@ struct UpdateManager {
             return
         }
 
-        fetchLatestRelease { info in
-            guard let info else {
+        fetchLatestFromAppcast { appcastInfo in
+            if let appcastInfo {
+                completion(appcastInfo.latestVersion > current ? appcastInfo : nil)
+                return
+            }
+            fetchLatestRelease { info in
+                guard let info else {
+                    completion(nil)
+                    return
+                }
+                completion(info.latestVersion > current ? info : nil)
+            }
+        }
+    }
+
+    private static func fetchLatestFromAppcast(completion: @escaping (UpdateInfo?) -> Void) {
+        var request = URLRequest(url: appcastURL)
+        request.timeoutInterval = 5
+        request.setValue("OpenRec", forHTTPHeaderField: "User-Agent")
+
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 5
+        config.timeoutIntervalForResource = 5
+        let session = URLSession(configuration: config)
+
+        session.dataTask(with: request) { data, response, error in
+            guard error == nil,
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let data, let xml = String(data: data, encoding: .utf8) else {
                 completion(nil)
                 return
             }
-            completion(info.latestVersion > current ? info : nil)
+            completion(latestEnclosure(inAppcast: xml))
+        }.resume()
+    }
+
+    /// Pull the newest enclosure out of a Sparkle appcast without an XML
+    /// dependency: scan each <enclosure …/> tag's attributes.
+    static func latestEnclosure(inAppcast xml: String) -> UpdateInfo? {
+        var best: UpdateInfo?
+        var searchRange = xml.startIndex..<xml.endIndex
+        while let tagStart = xml.range(of: "<enclosure", range: searchRange),
+              let tagEnd = xml.range(of: ">", range: tagStart.upperBound..<xml.endIndex) {
+            let tag = String(xml[tagStart.lowerBound..<tagEnd.upperBound])
+            searchRange = tagEnd.upperBound..<xml.endIndex
+
+            func attribute(_ name: String) -> String? {
+                guard let attrRange = tag.range(of: "\(name)=\"") else { return nil }
+                let valueStart = attrRange.upperBound
+                guard let valueEnd = tag.range(of: "\"", range: valueStart..<tag.endIndex) else { return nil }
+                return String(tag[valueStart..<valueEnd.lowerBound])
+            }
+
+            guard let urlString = attribute("url"),
+                  let url = URL(string: urlString),
+                  let versionString = attribute("sparkle:shortVersionString") ?? attribute("sparkle:version"),
+                  let version = Version(versionString) else { continue }
+            if best == nil || version > best!.latestVersion {
+                best = UpdateInfo(latestVersion: version, tag: "v\(versionString)", downloadURL: url)
+            }
         }
+        return best
     }
 
     static func downloadUpdate(from info: UpdateInfo, completion: @escaping (URL?) -> Void) {

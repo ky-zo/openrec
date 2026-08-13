@@ -236,6 +236,24 @@ struct PopoverContentView: View {
                 .tint(.red)
 
                 if !recorderManager.isRecording {
+                    if let update = recorderManager.readyUpdate {
+                        Button(action: { recorderManager.installReadyUpdate() }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Update to v\(update.version)")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(Color.blue)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Restart OpenRec and install the downloaded update")
+                    }
+
                     Button(action: {
                         onOpenLibrary(false)
                     }) {

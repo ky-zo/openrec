@@ -103,6 +103,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in self?.settingsWindow?.orderOut(nil) }
             .store(in: &cancellables)
 
+        // The idle panel grows to fit the Update button when one is ready.
+        recorderManager.$readyUpdate
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.recalculateWindowSize(animated: true) }
+            .store(in: &cancellables)
+
         windowState.onCollapseChange = { [weak self] _ in
             // Collapse is user-initiated — skip debounce for instant response
             self?.performResize(animated: true)
@@ -446,7 +453,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if isRecording {
                 baseHeight = showingRightPanel ? recordingExpandedHeight : recordingHeight
             } else {
-                baseHeight = expandedHeight
+                // Room for the blue Update button when a new version is ready.
+                baseHeight = expandedHeight + (recorderManager.readyUpdate != nil ? 34 : 0)
             }
             let w = mainWidth + (showingRightPanel ? transcriptWidth : 0)
             let h = collapsed ? collapsedHeight : baseHeight
@@ -535,31 +543,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let localURL else { return }
 
                 DispatchQueue.main.async {
-                    self.presentUpdateAlertIfNeeded(downloadURL: localURL, tag: info.tag)
+                    // Quietly downloaded; the recorder panel shows a blue
+                    // Update button instead of a modal alert.
+                    let versionLabel = info.tag.hasPrefix("v") ? String(info.tag.dropFirst()) : info.tag
+                    self.recorderManager.readyUpdate = RecorderManager.ReadyUpdate(
+                        version: versionLabel,
+                        localURL: localURL
+                    )
                 }
-            }
-        }
-    }
-
-    private func presentUpdateAlertIfNeeded(downloadURL: URL, tag: String) {
-        guard !updatePromptedThisSession else { return }
-        updatePromptedThisSession = true
-
-        let versionLabel = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-
-        let alert = NSAlert()
-        alert.messageText = "New version available"
-        alert.informativeText = "OpenRec \(versionLabel) has been downloaded and is ready to install."
-        alert.addButton(withTitle: "Restart")
-        alert.addButton(withTitle: "Skip")
-        alert.alertStyle = .informational
-
-        NSApp.activate(ignoringOtherApps: true)
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(downloadURL)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                NSApp.terminate(nil)
             }
         }
     }
