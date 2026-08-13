@@ -1,12 +1,35 @@
 # Build artifacts
 dist/
+.build/
+DerivedData/
+*.dmg
+
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
 
 # macOS
 .DS_Store
 
-# Xcode
-*.xcodeproj
-*.xcworkspace
+# Xcode user/build state (project and shared scheme files are source)
 xcuserdata/
-DerivedData/
+*.xcuserstate
+
+# Swift Package Manager
+.swiftpm/
+
+# Local config & secrets
+.env
+.env.local
 .env.build
+.claude/settings.local.json
+
+# Cloudflare Workers local state
+.wrangler/
+
+# Personal AI tooling (not part of the product)
+.agents/
+skills-lock.json
