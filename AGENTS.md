@@ -16,6 +16,15 @@ It exists because these exact mistakes have already been made once.
   domain (e.g. `api.openrec.co`) attached to the existing Worker, plus updating
   `PUBLIC_BASE_URL` and the Google OAuth client's redirect URIs. That is a
   config change, not a code split.
+- **Never add `routes` to `cloud/wrangler.toml` without `workers_dev = true`.**
+  Declaring any route silently disables the `workers.dev` subdomain on the
+  next deploy — and every shipped app build calls
+  `openrec-cloud.qstar0.workers.dev` directly, so that is a full production
+  outage (this happened on 2026-08-13; the Meetings sidebar filled with a
+  Cloudflare 404 for every user). After ANY worker deploy, smoke-check:
+  `curl -s -o /dev/null -w "%{http_code} %{content_type}" https://openrec-cloud.qstar0.workers.dev/v1/meetings`
+  must print `401 application/json` (the worker's auth error) — a `404
+  text/plain` means the platform, not the worker, answered.
 - **Google identity vs. calendar access are separate grants.** Sign-in
   (`/v1/auth/google/*`) owns the meeting library. Calendar connections
   (`/v1/calendar/connect/*`, stored in the `calendar_connections` table) are

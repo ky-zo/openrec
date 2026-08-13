@@ -2,6 +2,9 @@ name = "openrec-cloud"
 main = "src/index.ts"
 compatibility_date = "2026-08-01"
 
+# Adding routes disables the workers.dev subdomain by default — keep it on:
+# every shipped app build calls openrec-cloud.qstar0.workers.dev directly.
+workers_dev = true
 routes = [
   { pattern = "api.openrec.co", custom_domain = true }
 ]
