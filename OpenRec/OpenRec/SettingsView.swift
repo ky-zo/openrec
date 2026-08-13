@@ -29,6 +29,14 @@ private enum ConnectionCheck: Equatable {
     case failure(String)
 }
 
+private enum CalendarConnectionCheck: Equatable {
+    case idle
+    case checking
+    case connected
+    case needsReconnect
+    case failed(String)
+}
+
 struct OpenRecSettingsView: View {
     @ObservedObject var recorderManager: RecorderManager
     @State private var section: SettingsSection = .account
@@ -36,6 +44,7 @@ struct OpenRecSettingsView: View {
     @State private var openAICheck: ConnectionCheck = .idle
     @State private var r2Check: ConnectionCheck = .idle
     @State private var webhookCheck: ConnectionCheck = .idle
+    @State private var calendarCheck: CalendarConnectionCheck = .idle
     @StateObject private var assemblyAIKeyVerifier = APIKeyAutoVerifier()
     @StateObject private var openAIKeyVerifier = APIKeyAutoVerifier()
     @State private var microphoneGranted = false
@@ -113,6 +122,28 @@ struct OpenRecSettingsView: View {
             .padding(.horizontal, 8)
 
             Spacer()
+
+            Button {
+                if let url = URL(string: "https://x.com/messages/compose?recipient_id=945756809356300294&text=Hey%2C%20some%20OpenRec%20feedback%3A%20") {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "ladybug")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 16)
+                    Text("Bugs and feedback")
+                        .font(.system(size: 11, weight: .medium))
+                    Spacer()
+                }
+                .foregroundColor(Color.white.opacity(0.5))
+                .padding(.horizontal, 11)
+                .frame(height: 34)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(SettingsPressStyle())
+            .padding(.horizontal, 8)
+
             Text("Changes save automatically")
                 .font(.system(size: 9, weight: .medium))
                 .foregroundColor(Color.white.opacity(0.3))
@@ -248,6 +279,108 @@ struct OpenRecSettingsView: View {
                     }
                 }
             }
+
+            googleCalendarCard
+        }
+    }
+
+    private var googleCalendarCard: some View {
+        SettingsCard(title: "Google Calendar") {
+            HStack(spacing: 10) {
+                Image(systemName: "calendar")
+                    .foregroundColor(calendarStatusColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Meeting name auto-fill")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(primary)
+                    Text(calendarStatusText)
+                        .font(.system(size: 10))
+                        .foregroundColor(secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if recorderManager.cloudStorage.mode == .managed && recorderManager.cloudStorage.isManagedSignedIn {
+                    Button(calendarConnectButtonTitle) {
+                        Task {
+                            if await recorderManager.cloudStorage.connectGoogleCalendar() {
+                                probeCalendarAccess()
+                            }
+                        }
+                    }
+                    .buttonStyle(SettingsButtonStyle(prominent: calendarCheck == .needsReconnect))
+                    .disabled(recorderManager.cloudStorage.isConnectingCalendar)
+                    .help("Pick any Google account for calendar access — the meeting library stays on the account you signed in with.")
+                    if calendarCheck != .needsReconnect {
+                        Button(calendarCheck == .checking ? "Checking…" : "Check access") { probeCalendarAccess() }
+                            .buttonStyle(SettingsButtonStyle(prominent: false))
+                            .disabled(calendarCheck == .checking)
+                    }
+                }
+            }
+        }
+        .onAppear { probeCalendarAccess() }
+        .onChange(of: recorderManager.cloudStorage.isManagedSignedIn) { _ in probeCalendarAccess() }
+        .onChange(of: recorderManager.cloudStorage.mode) { _ in probeCalendarAccess() }
+        // A reconnect keeps isManagedSignedIn true throughout, but completing
+        // it updates statusMessage — re-check calendar access then.
+        .onChange(of: recorderManager.cloudStorage.statusMessage) { _ in probeCalendarAccess() }
+    }
+
+    private var calendarStatusColor: Color {
+        switch calendarCheck {
+        case .connected: return .green.opacity(0.86)
+        case .needsReconnect, .failed: return .orange.opacity(0.9)
+        case .idle, .checking: return secondary
+        }
+    }
+
+    private var calendarConnectButtonTitle: String {
+        if recorderManager.cloudStorage.isConnectingCalendar { return "Opening Google…" }
+        return recorderManager.cloudStorage.calendarEmails.isEmpty ? "Connect calendar" : "Add account"
+    }
+
+    private var calendarStatusText: String {
+        guard recorderManager.cloudStorage.mode == .managed else {
+            return "New calls are named after the current event in the calendars enabled in the macOS Calendar app."
+        }
+        guard recorderManager.cloudStorage.isManagedSignedIn else {
+            return "Sign in above first — calendar connections attach to your OpenRec Cloud account."
+        }
+        let emails = recorderManager.cloudStorage.calendarEmails
+        switch calendarCheck {
+        case .connected:
+            let accounts = emails.isEmpty
+                ? (recorderManager.cloudStorage.managedEmail ?? "Google")
+                : emails.joined(separator: ", ")
+            return "Reading \(accounts) — every calendar in each account is checked, merged into one list. Connect as many Google accounts as needed; storage is unaffected."
+        case .needsReconnect:
+            return "No calendar is connected yet. Connect any Google account — read-only, and separate from your sign-in."
+        case .failed(let message):
+            return message
+        case .checking:
+            return "Checking calendar access…"
+        case .idle:
+            return "Read-only access is used to name new calls after the current meeting."
+        }
+    }
+
+    private func probeCalendarAccess() {
+        guard recorderManager.cloudStorage.mode == .managed,
+              recorderManager.cloudStorage.isManagedSignedIn else {
+            calendarCheck = .idle
+            return
+        }
+        calendarCheck = .checking
+        Task {
+            await recorderManager.cloudStorage.refreshCalendarConnectionStatus()
+            do {
+                _ = try await recorderManager.cloudStorage.currentCalendarCall()
+                calendarCheck = .connected
+            } catch OpenRecError.requestFailed(let status, _) where status == 409 {
+                calendarCheck = .needsReconnect
+            } catch {
+                calendarCheck = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -350,24 +483,6 @@ struct OpenRecSettingsView: View {
                         detail: "Show a compact side prompt for Meet, Zoom, Teams, FaceTime, and Webex",
                         value: $recorderManager.callDetectionEnabled
                     )
-                    SettingsDivider()
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Transcription timing").font(.system(size: 11.5, weight: .semibold)).foregroundColor(primary)
-                            Text("Live shows notes during the call; After prioritizes a clean final transcript.").font(.system(size: 10)).foregroundColor(secondary)
-                        }
-                        Spacer()
-                        Picker("", selection: Binding(
-                            get: { recorderManager.transcriptionManager.mode },
-                            set: { recorderManager.transcriptionManager.mode = $0 }
-                        )) {
-                            ForEach(TranscriptionMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 140)
-                    }
-                    .padding(.vertical, 11)
                 }
             }
 

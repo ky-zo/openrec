@@ -2,6 +2,10 @@ name = "openrec-cloud"
 main = "src/index.ts"
 compatibility_date = "2026-08-01"
 
+routes = [
+  { pattern = "api.openrec.co", custom_domain = true }
+]
+
 [vars]
 PUBLIC_BASE_URL = "https://openrec-cloud.qstar0.workers.dev"
 

@@ -37,13 +37,17 @@ struct OpenAIService {
         let prompt = """
         Turn this meeting transcript into concise, factual meeting memory. Infer participant names only when the transcript explicitly supports them. Never invent names, owners, dates, or decisions. Return JSON matching the provided schema. Suggested title from the call window: \(callTitle ?? "none").
 
+        For "aiNotes", write markdown notes the way a sharp human note-taker would capture the call as it happened: short "## " section headers that follow the conversation's actual topics, tight "- " bullet fragments underneath (not full prose sentences), with concrete specifics preserved — names, numbers, prices, tools, dates, and memorable quotes worth keeping. Bold the load-bearing terms. Keep it scannable; no filler, no meta commentary about the transcript.
+
+        For "summary", write 2-3 plain sentences of what the call was about and where it landed.
+
         Transcript:
         \(transcript)
         """
         let body: [String: Any] = [
             "model": "gpt-5-mini",
             "messages": [
-                ["role": "system", "content": "You extract meeting summaries, participants, decisions, and concrete next steps."],
+                ["role": "system", "content": "You take meeting notes like an excellent human note-taker, and extract participants, decisions, and concrete next steps."],
                 ["role": "user", "content": prompt],
             ],
             "response_format": [
@@ -56,6 +60,7 @@ struct OpenAIService {
                         "properties": [
                             "title": ["type": "string"],
                             "summary": ["type": "string"],
+                            "aiNotes": ["type": "string"],
                             "participants": ["type": "array", "items": ["type": "string"]],
                             "actionItems": [
                                 "type": "array",
@@ -72,7 +77,7 @@ struct OpenAIService {
                             ],
                             "decisions": ["type": "array", "items": ["type": "string"]],
                         ],
-                        "required": ["title", "summary", "participants", "actionItems", "decisions"],
+                        "required": ["title", "summary", "aiNotes", "participants", "actionItems", "decisions"],
                         "additionalProperties": false,
                     ],
                 ],

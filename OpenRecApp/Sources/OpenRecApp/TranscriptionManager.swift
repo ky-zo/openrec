@@ -13,6 +13,8 @@ enum TranscriptionMode: String, CaseIterable {
     case postRecording = "After"
 }
 
+// Transcription always runs post-recording; the live mode code paths are kept but unreachable.
+
 struct DisplaySegment: Identifiable {
     let id = UUID()
     let speakerLabel: String
@@ -22,11 +24,7 @@ struct DisplaySegment: Identifiable {
 
 @MainActor
 final class TranscriptionManager: ObservableObject {
-    @Published var mode: TranscriptionMode = TranscriptionMode(
-        rawValue: UserDefaults.standard.string(forKey: "TranscriptionMode") ?? ""
-    ) ?? .live {
-        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "TranscriptionMode") }
-    }
+    let mode: TranscriptionMode = .postRecording
     @Published var isTranscribing = false
     @Published var isAnalyzing = false
     @Published var showPanel = false

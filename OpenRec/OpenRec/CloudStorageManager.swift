@@ -69,6 +69,13 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
     }
     @Published var managedEmail = UserDefaults.standard.string(forKey: "ManagedEmail")
     @Published var isSigningIn = false
+    /// Google accounts serving calendar context — independent of the sign-in
+    /// identity, and additive: connect as many as needed, all merge into one
+    /// upcoming list.
+    @Published var calendarEmails: [String] = UserDefaults.standard.stringArray(forKey: "CalendarEmails") ?? []
+    @Published var isConnectingCalendar = false
+
+    var calendarEmail: String? { calendarEmails.first }
     @Published var statusMessage: String?
     @Published private(set) var libraryMeetings: [MeetingRecord] = []
     @Published private(set) var isLoadingLibrary = false
@@ -274,6 +281,109 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
         NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow()
     }
 
+    /// Connect (or switch) the Google account whose calendar names calls and
+    /// fills the Coming up list. Deliberately separate from sign-in: the
+    /// meeting library stays on the signed-in account no matter which account
+    /// is picked here.
+    func connectGoogleCalendar() async -> Bool {
+        guard !isConnectingCalendar else { return false }
+        guard mode == .managed, isManagedSignedIn else {
+            statusMessage = "Sign in to OpenRec Cloud first, then connect a calendar."
+            return false
+        }
+        isConnectingCalendar = true
+        defer { isConnectingCalendar = false }
+        do {
+            let context = try captureStorageContext()
+            guard let base = context.managedBaseURL,
+                  let token = context.managedToken,
+                  !token.isEmpty else {
+                throw OpenRecError.invalidConfiguration("Sign in to OpenRec Cloud first, then connect a calendar.")
+            }
+            let scheme = authCallbackScheme
+            var request = URLRequest(url: base.appendingPathComponent("v1/calendar/connect/session"))
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 20
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["redirect_uri": "\(scheme)://calendar"])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validate(response: response, data: data)
+            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let urlString = root["url"] as? String,
+                  let authURL = URL(string: urlString) else {
+                throw OpenRecError.invalidResponse("The calendar server returned an unusable connect link.")
+            }
+
+            let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
+                let session = ASWebAuthenticationSession(url: authURL, callbackURLScheme: scheme) { url, error in
+                    if let error { continuation.resume(throwing: error) }
+                    else if let url { continuation.resume(returning: url) }
+                    else { continuation.resume(throwing: OpenRecError.invalidResponse("Google returned no calendar callback.")) }
+                }
+                session.presentationContextProvider = self
+                session.prefersEphemeralWebBrowserSession = false
+                authSession = session
+                if !session.start() {
+                    continuation.resume(throwing: OpenRecError.invalidResponse("Could not start the Google Calendar connection."))
+                }
+            }
+
+            let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems
+            guard items?.first(where: { $0.name == "status" })?.value == "connected" else {
+                throw OpenRecError.invalidResponse("The Google Calendar connection was not completed.")
+            }
+            if let email = items?.first(where: { $0.name == "email" })?.value,
+               !calendarEmails.contains(email) {
+                calendarEmails.append(email)
+                UserDefaults.standard.set(calendarEmails, forKey: "CalendarEmails")
+            }
+            await refreshCalendarConnectionStatus()
+            return true
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Ask the backend which Google accounts currently serve calendar context.
+    func refreshCalendarConnectionStatus() async {
+        guard mode == .managed,
+              let context = try? captureStorageContext(),
+              let base = context.managedBaseURL,
+              let token = context.managedToken,
+              !token.isEmpty else { return }
+        var request = URLRequest(url: base.appendingPathComponent("v1/calendar/status"))
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (try? validate(response: response, data: data)) != nil,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        calendarEmails = root["emails"] as? [String] ?? []
+        UserDefaults.standard.set(calendarEmails, forKey: "CalendarEmails")
+    }
+
+    /// Remove one connected calendar account.
+    func disconnectCalendar(email: String) async {
+        guard mode == .managed,
+              let context = try? captureStorageContext(),
+              let base = context.managedBaseURL,
+              let token = context.managedToken,
+              !token.isEmpty else { return }
+        var components = URLComponents(
+            url: base.appendingPathComponent("v1/calendar/connection"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [URLQueryItem(name: "email", value: email)]
+        guard let url = components?.url else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+        _ = try? await URLSession.shared.data(for: request)
+        await refreshCalendarConnectionStatus()
+    }
+
     func signInWithGoogle() async {
         guard !isSigningIn else { return }
         isSigningIn = true
@@ -414,6 +524,45 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
         let title = event["title"] as? String ?? "Calendar call"
         let participants = event["participants"] as? [String] ?? []
         return CalendarCallContext(title: title, participants: participants)
+    }
+
+    /// Ongoing and upcoming Google Calendar events for the "Coming up" list.
+    /// Returns nil when the account cannot serve calendar context (own-R2
+    /// mode, signed out, or a sign-in that predates calendar access).
+    func upcomingCalendarEvents(withinDays days: Int = 7) async -> [UpcomingCalendarEvent]? {
+        guard mode == .managed,
+              let context = try? captureStorageContext(),
+              let base = context.managedBaseURL,
+              let token = context.managedToken,
+              !token.isEmpty else { return nil }
+        var components = URLComponents(
+            url: base.appendingPathComponent("v1/calendar/upcoming"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [URLQueryItem(name: "days", value: String(days))]
+        guard let url = components?.url else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (try? validate(response: response, data: data)) != nil,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let events = root["events"] as? [[String: Any]] else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoPlain = ISO8601DateFormatter()
+        return events.compactMap { event -> UpcomingCalendarEvent? in
+            guard let title = event["title"] as? String, !title.isEmpty,
+                  let startsAt = event["startsAt"] as? String,
+                  let start = iso.date(from: startsAt) ?? isoPlain.date(from: startsAt) else { return nil }
+            let end = (event["endsAt"] as? String).flatMap { iso.date(from: $0) ?? isoPlain.date(from: $0) } ?? start
+            return UpcomingCalendarEvent(
+                id: event["id"] as? String ?? "\(title)-\(start.timeIntervalSince1970)",
+                title: title,
+                start: start,
+                end: end
+            )
+        }
     }
 
     func saveMeeting(
@@ -651,6 +800,62 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
             try FileManager.default.removeItem(at: localURL)
         }
         libraryMeetings.removeAll { $0.id == meetingID }
+    }
+
+    /// Permanently deletes a saved meeting everywhere it lives: cloud metadata
+    /// and media for its storage mode, retained local artifact files, and the
+    /// local library record. Callers confirm with the user first.
+    func deleteMeeting(_ meeting: MeetingRecord) async throws {
+        switch meeting.storageMode {
+        case .managed:
+            let context = try captureStorageContext(for: .managed)
+            guard let base = context.managedBaseURL,
+                  let token = context.managedToken,
+                  !token.isEmpty else {
+                throw OpenRecError.invalidConfiguration("Sign in to OpenRec Cloud before deleting this meeting.")
+            }
+            var request = URLRequest(
+                url: base.appendingPathComponent("v1/meetings/\(meeting.id.uuidString.lowercased())")
+            )
+            request.httpMethod = "DELETE"
+            request.timeoutInterval = 45
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validate(response: response, data: data)
+        case .ownR2:
+            do {
+                let context = try captureStorageContext(for: .ownR2)
+                guard let signer = context.r2Signer else {
+                    throw OpenRecError.invalidConfiguration("The R2 recording context is unavailable.")
+                }
+                let prefix = "meetings/\(meeting.id.uuidString.lowercased())"
+                // R2 treats deleting a missing key as success, so removing the
+                // full fixed key set (including sidecar backups) is safe.
+                for objectKey in [
+                    OwnR2MediaStreamingTransport.objectKey(meetingID: meeting.id, kind: .screen),
+                    OwnR2MediaStreamingTransport.objectKey(meetingID: meeting.id, kind: .audio),
+                    "\(prefix)/transcript.txt",
+                    "\(prefix)/meeting.json",
+                ] {
+                    let request = try signer.signedDeleteRequest(objectKey: objectKey)
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    try validate(response: response, data: data)
+                }
+            } catch {
+                // Without working R2 credentials the bucket cannot be touched.
+                // A meeting that never marked cloud media can still be removed
+                // locally; one with cloud media must not silently orphan it.
+                if meeting.hasScreenRecording || meeting.hasAudioRecording { throw error }
+            }
+        }
+
+        if let path = meeting.localScreenPath { try? FileManager.default.removeItem(atPath: path) }
+        if let path = meeting.localAudioPath { try? FileManager.default.removeItem(atPath: path) }
+        let localURL = meetingsDirectory.appendingPathComponent("\(meeting.id.uuidString.lowercased()).json")
+        if FileManager.default.fileExists(atPath: localURL.path) {
+            try FileManager.default.removeItem(at: localURL)
+        }
+        libraryMeetings.removeAll { $0.id == meeting.id }
     }
 
     private func mediaStreamingTransportSnapshot() throws -> any MediaStreamingTransport {

@@ -61,6 +61,10 @@ final class AudioMixer {
     private let transcriptionSampleRate: Double = 16_000
     private let framesPerChunk = 4_800 // 100 ms at 48 kHz
     private let holdbackFrames = 4_800 // let the other input arrive before mixing
+    // macOS input levels leave speech well below system-audio loudness when
+    // summed 1:1, which made recorded voices sound too quiet. Boost the mic
+    // before mixing; each sample is clamped so a loud close talker cannot wrap.
+    private let micGain: Float = 2.0
 
     private var timer: DispatchSourceTimer?
     private var running = false
@@ -164,12 +168,17 @@ final class AudioMixer {
               let extracted = extractMonoPCM(from: sampleBuffer),
               !extracted.samples.isEmpty else { return }
 
-        let resampled = resampleIfNeeded(
+        var resampled = resampleIfNeeded(
             extracted.samples,
             from: extracted.sampleRate,
             to: outputSampleRate
         )
         guard !resampled.isEmpty else { return }
+        if source == .mic, micGain != 1 {
+            for index in resampled.indices {
+                resampled[index] = max(-1, min(1, resampled[index] * micGain))
+            }
+        }
 
         let timestamp = extracted.presentationTime.isNumeric
             ? extracted.presentationTime

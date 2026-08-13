@@ -30,6 +30,7 @@
 		A1000065243B0001 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000075243B0001 /* OnboardingView.swift */; };
 		A1000066243B0001 /* OpenAIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000076243B0001 /* OpenAIService.swift */; };
 		A100006A243B0001 /* AssemblyAIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007A243B0001 /* AssemblyAIService.swift */; };
+		A10000CA243B0002 /* CalendarMeetingSuggester.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000CB243B0002 /* CalendarMeetingSuggester.swift */; };
 		A100006B243B0001 /* MediaStreamingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007B243B0001 /* MediaStreamingSession.swift */; };
 		A100006C243B0001 /* MediaStreamingTransports.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007C243B0001 /* MediaStreamingTransports.swift */; };
 		A100006D243B0001 /* MediaStreamingUploadJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007D243B0001 /* MediaStreamingUploadJournal.swift */; };
@@ -67,6 +68,7 @@
 		A1000075243B0001 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		A1000076243B0001 /* OpenAIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIService.swift; sourceTree = "<group>"; };
 		A100007A243B0001 /* AssemblyAIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssemblyAIService.swift; sourceTree = "<group>"; };
+		A10000CB243B0002 /* CalendarMeetingSuggester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMeetingSuggester.swift; sourceTree = "<group>"; };
 		A100007B243B0001 /* MediaStreamingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaStreamingSession.swift; sourceTree = "<group>"; };
 		A100007C243B0001 /* MediaStreamingTransports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaStreamingTransports.swift; sourceTree = "<group>"; };
 		A100007D243B0001 /* MediaStreamingUploadJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaStreamingUploadJournal.swift; sourceTree = "<group>"; };
@@ -137,6 +139,7 @@
 				A1000075243B0001 /* OnboardingView.swift */,
 				A1000076243B0001 /* OpenAIService.swift */,
 				A100007A243B0001 /* AssemblyAIService.swift */,
+				A10000CB243B0002 /* CalendarMeetingSuggester.swift */,
 				A1000077243B0001 /* WebhookDeliveryService.swift */,
 				A1000078243B0001 /* RecordingLibraryView.swift */,
 				A1000079243B0001 /* SettingsView.swift */,
@@ -263,6 +266,7 @@
 				A1000065243B0001 /* OnboardingView.swift in Sources */,
 				A1000066243B0001 /* OpenAIService.swift in Sources */,
 				A100006A243B0001 /* AssemblyAIService.swift in Sources */,
+				A10000CA243B0002 /* CalendarMeetingSuggester.swift in Sources */,
 				A1000067243B0001 /* WebhookDeliveryService.swift in Sources */,
 				A1000068243B0001 /* RecordingLibraryView.swift in Sources */,
 				A1000069243B0001 /* SettingsView.swift in Sources */,
@@ -399,7 +403,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 18;
 				DEVELOPMENT_TEAM = G58RTP74UP;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -412,7 +416,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.6;
+				MARKETING_VERSION = 0.3.1;
 				PRODUCT_BUNDLE_IDENTIFIER = app.openrec.mac.dev;
 				PRODUCT_NAME = "OpenRec Dev";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -430,7 +434,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 18;
 				DEVELOPMENT_TEAM = G58RTP74UP;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -443,7 +447,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.6;
+				MARKETING_VERSION = 0.3.1;
 				PRODUCT_BUNDLE_IDENTIFIER = app.openrec.mac;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

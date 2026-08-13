@@ -3,7 +3,7 @@ import AppKit
 
 struct PopoverContentView: View {
     @ObservedObject var recorderManager: RecorderManager
-    let onOpenLibrary: () -> Void
+    let onOpenLibrary: (_ focusLastSaved: Bool) -> Void
     @State private var isHovering = false
     @State private var isHoveringFolder = false
     @State private var isHoveringTranscription = false
@@ -135,7 +135,7 @@ struct PopoverContentView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.white.opacity(0.72))
                 } else if recorderManager.savePhase.isSaved, recorderManager.lastSavedMeetingID != nil {
-                    Button("View meeting") { onOpenLibrary() }
+                    Button("View meeting") { onOpenLibrary(true) }
                         .buttonStyle(.plain)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.white.opacity(0.78))
@@ -236,16 +236,8 @@ struct PopoverContentView: View {
                 .tint(.red)
 
                 if !recorderManager.isRecording {
-                    // Transcription Mode — segmented tabs
-                    TranscriptionModePicker(
-                        selection: Binding(
-                            get: { recorderManager.transcriptionManager.mode },
-                            set: { recorderManager.transcriptionManager.mode = $0 }
-                        )
-                    )
-
                     Button(action: {
-                        onOpenLibrary()
+                        onOpenLibrary(false)
                     }) {
                         HStack(spacing: 6) {
                             Image(systemName: "rectangle.stack")
@@ -264,6 +256,11 @@ struct PopoverContentView: View {
                         isHoveringFolder = hovering
                     }
 
+                    Text(Self.versionLabel)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.28))
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 2)
                 }
             }
             .padding(.horizontal, 14)
@@ -275,6 +272,12 @@ struct PopoverContentView: View {
             }
         }
     }
+
+    static let versionLabel: String = {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        guard let version, !version.isEmpty else { return "dev build" }
+        return "v\(version)"
+    }()
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
         let totalSeconds = Int(seconds)
@@ -309,38 +312,6 @@ struct AudioWaveformView: View {
                 )
             }
         }
-    }
-}
-
-// MARK: - Transcription Mode Picker
-
-private struct TranscriptionModePicker: View {
-    @Binding var selection: TranscriptionMode
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(TranscriptionMode.allCases, id: \.self) { mode in
-                let isSelected = mode == selection
-                Button {
-                    selection = mode
-                } label: {
-                    Text(mode.rawValue)
-                        .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? .white : .white.opacity(0.45))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(isSelected ? Color.white.opacity(0.14) : Color.clear)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(2)
-        .background(Color.white.opacity(0.06))
-        .cornerRadius(7)
     }
 }
 

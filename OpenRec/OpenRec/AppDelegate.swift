@@ -16,10 +16,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let windowState = WindowState()
     private let mainWidth: CGFloat = 240
     private let transcriptWidth: CGFloat = 281
-    // Keep the idle panel compact: this leaves deliberate breathing room
-    // between the record action and call controls without a large dead zone.
-    private let expandedHeight: CGFloat = 360
-    private let recordingHeight: CGFloat = 76
+    // Keep the idle panel compact: sized so the error state still fits while
+    // leaving only a small gap between the record action and call controls.
+    // (360 dates from when the panel also held the Live/After mode picker.)
+    private let expandedHeight: CGFloat = 320
+    private let recordingHeight: CGFloat = 84
     private let recordingExpandedHeight: CGFloat = 320
     private let collapsedHeight: CGFloat = 86
     private var pendingTerminate = false
@@ -82,15 +83,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.performResize(animated: true)
-            }
-            .store(in: &cancellables)
-
-        // Observe mode changes — right panel visibility depends on mode
-        recorderManager.transcriptionManager.$mode
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.recalculateWindowSize(animated: true)
             }
             .store(in: &cancellables)
 
@@ -215,6 +207,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showRecorderWindow() {
         guard let window = controlWindow else { return }
+        recorderManager.refreshMeetingNameSuggestion()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -252,8 +245,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 onOpenSettings: { [weak self] in
                     self?.showSettingsWindow()
                 },
-                onOpenLibrary: { [weak self] in
-                    self?.showRecordingsLibrary()
+                onOpenLibrary: { [weak self] focusLastSaved in
+                    self?.presentRecordingsLibrary(focusLastSaved: focusLastSaved)
                 }
             )
         )
@@ -345,10 +338,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showRecordingsLibrary() {
-        if let meetingID = recorderManager.lastSavedMeetingID {
+        presentRecordingsLibrary(focusLastSaved: false)
+    }
+
+    private func presentRecordingsLibrary(focusLastSaved: Bool) {
+        if focusLastSaved, let meetingID = recorderManager.lastSavedMeetingID {
             // A selection request carries a fresh token, so clicking “View meeting”
             // selects the saved call even when the library window already exists
-            // and the user previously browsed to a different meeting.
+            // and the user previously browsed to a different meeting. Plain opens
+            // skip this so the window can lead with Coming up.
             recordingsNavigation.select(meetingID)
         }
         if let window = recordingsWindow {
@@ -379,7 +377,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(
             rootView: RecordingLibraryView(
                 recorderManager: recorderManager,
-                navigation: recordingsNavigation
+                navigation: recordingsNavigation,
+                onOpenSettings: { [weak self] in self?.showSettingsWindow() }
             )
         )
         window.center()

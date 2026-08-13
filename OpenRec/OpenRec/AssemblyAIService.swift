@@ -171,7 +171,7 @@ enum AssemblyAITranscriptMapper {
         if let text = response.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             return [DisplaySegment(speakerLabel: "Conversation", text: text, timestamp: 0)]
         }
-        throw OpenRecError.invalidResponse("AssemblyAI returned an empty transcript.")
+        throw OpenRecError.noSpeechDetected("AssemblyAI processed the recording but did not detect any spoken words.")
     }
 }
 

@@ -7,14 +7,45 @@ final class CloudTranscriptRetentionPolicyTests: XCTestCase {
             try CloudTranscriptRetentionPolicy.validatedTranscript(
                 "partial text that must not mask a failed transcription",
                 required: true,
-                failureDescription: "The transcription request timed out"
+                failure: OpenRecError.timedOut("The transcription request timed out")
             )
         ) { error in
             let message = error.localizedDescription
             XCTAssertTrue(message.contains("timed out"))
             XCTAssertTrue(message.contains("kept the recording needed for retry"))
-            XCTAssertTrue(message.contains("AssemblyAI API key"))
+            XCTAssertTrue(message.contains("internet connection"))
             XCTAssertTrue(message.contains("retry this meeting"))
+            XCTAssertFalse(message.contains("API key"))
+        }
+    }
+
+    func testAuthenticationFailureBlamesTheAPIKeyNotTheRecording() {
+        XCTAssertThrowsError(
+            try CloudTranscriptRetentionPolicy.validatedTranscript(
+                "",
+                required: true,
+                failure: OpenRecError.requestFailed(status: 401, message: "unauthorized")
+            )
+        ) { error in
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("rejected the API key"))
+            XCTAssertTrue(message.contains("kept the recording needed for retry"))
+            XCTAssertFalse(message.contains("spoken words"))
+        }
+    }
+
+    func testNoSpeechFailureDoesNotBlameTheAPIKey() {
+        XCTAssertThrowsError(
+            try CloudTranscriptRetentionPolicy.validatedTranscript(
+                "",
+                required: true,
+                failure: OpenRecError.noSpeechDetected("AssemblyAI processed the recording but did not detect any spoken words.")
+            )
+        ) { error in
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("did not detect any spoken words"))
+            XCTAssertTrue(message.contains("kept the recording needed for retry"))
+            XCTAssertFalse(message.contains("Fix the AssemblyAI API key"))
         }
     }
 
@@ -26,7 +57,7 @@ final class CloudTranscriptRetentionPolicyTests: XCTestCase {
             )
         ) { error in
             let message = error.localizedDescription
-            XCTAssertTrue(message.contains("empty transcript"))
+            XCTAssertTrue(message.contains("did not detect any spoken words"))
             XCTAssertTrue(message.contains("kept the recording needed for retry"))
         }
     }
@@ -35,7 +66,7 @@ final class CloudTranscriptRetentionPolicyTests: XCTestCase {
         let transcript = try CloudTranscriptRetentionPolicy.validatedTranscript(
             "",
             required: false,
-            failureDescription: "AssemblyAI unavailable"
+            failure: OpenRecError.invalidResponse("AssemblyAI unavailable")
         )
 
         XCTAssertEqual(transcript, "")

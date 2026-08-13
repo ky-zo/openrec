@@ -149,7 +149,10 @@ final class AssemblyAIServiceTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("universal-2 instead of universal-3-5-pro"))
         }
         XCTAssertThrowsError(try AssemblyAITranscriptMapper.displaySegments(from: empty)) { error in
-            XCTAssertTrue(error.localizedDescription.contains("empty transcript"))
+            guard case OpenRecError.noSpeechDetected(let message) = error else {
+                return XCTFail("Expected noSpeechDetected, got \(error)")
+            }
+            XCTAssertTrue(message.contains("did not detect any spoken words"))
         }
     }
 

@@ -64,25 +64,34 @@ struct CloudTranscriptRetentionPolicy {
         return transcriptIsEmpty && !hasStoredInsights
     }
 
+    static let noSpeechFailureMessage =
+        "AssemblyAI processed the recording but did not detect any spoken words — the API key and connection are fine. OpenRec kept the recording needed for retry in case the call did contain speech; check the selected microphone before the next call."
+
     static func validatedTranscript(
         _ transcript: String,
         required: Bool,
-        failureDescription: String? = nil
+        failure: Error? = nil
     ) throws -> String {
         guard required else { return transcript }
 
-        let failure = failureDescription?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let failure, !failure.isEmpty {
+        if let failure {
+            if case OpenRecError.noSpeechDetected = failure {
+                throw OpenRecError.recordingFailed(noSpeechFailureMessage)
+            }
+            if AssemblyAIService.isAuthenticationFailure(failure) {
+                throw OpenRecError.recordingFailed(
+                    "AssemblyAI rejected the API key, so this recording was not transcribed. OpenRec kept the recording needed for retry. Fix the AssemblyAI API key in Settings, then retry this meeting."
+                )
+            }
+            var description = failure.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            while description.hasSuffix(".") { description.removeLast() }
             throw OpenRecError.recordingFailed(
-                "The requested transcript could not be created: \(failure). OpenRec kept the recording needed for retry. Check your AssemblyAI API key and internet connection, then retry this meeting."
+                "The requested transcript could not be created: \(description). OpenRec kept the recording needed for retry. Check your internet connection, then retry this meeting."
             )
         }
 
         guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw OpenRecError.recordingFailed(
-                "AssemblyAI returned an empty transcript. OpenRec kept the recording needed for retry. Check that the call contains audible speech, then retry this meeting."
-            )
+            throw OpenRecError.recordingFailed(noSpeechFailureMessage)
         }
         return transcript
     }
@@ -125,10 +134,18 @@ final class RecorderManager: ObservableObject {
     @Published var detectedCall: DetectedCall?
     @Published var lastSavedMeetingID: UUID?
     @Published private(set) var cloudUploadProgress: MediaStreamingProgress?
+    @Published private(set) var upcomingEvents: [UpcomingCalendarEvent] = []
+    @Published private(set) var isLoadingUpcomingEvents = false
+    /// True when the Google Calendar feed answered the last refresh — i.e. the
+    /// signed-in Google account is actually serving calendar events, not just
+    /// signed in.
+    @Published private(set) var googleCalendarActive = false
 
     let transcriptionManager = TranscriptionManager()
     let cloudStorage = CloudStorageManager()
     let webhookSettings = WebhookSettings()
+    private let calendarSuggester = CalendarMeetingSuggester()
+    private var lastSuggestedMeetingName: String?
 
     private var recorder: ScreenRecorder?
     private var mediaStreamingSession: MediaStreamingSession?
@@ -196,6 +213,72 @@ final class RecorderManager: ObservableObject {
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
         resumeDeferredMediaCleanup()
+        refreshMeetingNameSuggestion()
+    }
+
+    /// Pre-fill the call-name field with the calendar meeting happening now,
+    /// preferring the connected Google Calendar (managed cloud) and falling
+    /// back to the Mac's local calendars. Never overwrites a name typed this
+    /// session — only an empty field, the restored previous call name, or an
+    /// earlier suggestion.
+    func refreshMeetingNameSuggestion() {
+        guard !isRecording, !isStarting, !isProcessing else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            var suggestion = ((try? await self.cloudStorage.currentCalendarCall()) ?? nil)?.title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if suggestion?.isEmpty != false {
+                suggestion = await self.calendarSuggester.currentMeetingTitle()
+            }
+            guard let suggestion, !suggestion.isEmpty else { return }
+            let current = self.clientNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            let replaceable = current.isEmpty
+                || current == self.lastSuggestedMeetingName
+                || current == self.lastClientNameDisplay
+            guard replaceable, current != suggestion else { return }
+            self.lastSuggestedMeetingName = suggestion
+            self.clientNameInput = suggestion
+        }
+    }
+
+    /// Load ongoing/upcoming calendar events for the Meetings window's
+    /// "Coming up" list, merging the connected Google Calendar (managed cloud)
+    /// with the Mac's local calendars.
+    func refreshUpcomingEvents(withinDays days: Int = 7) {
+        guard !isLoadingUpcomingEvents else { return }
+        isLoadingUpcomingEvents = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isLoadingUpcomingEvents = false }
+            async let cloudEvents = self.cloudStorage.upcomingCalendarEvents(withinDays: days)
+            async let localEvents = self.calendarSuggester.upcomingEvents(withinDays: days)
+            let cloud = await cloudEvents
+            self.googleCalendarActive = cloud != nil
+            let merged = (cloud ?? []) + (await localEvents)
+            // The same meeting often exists in both sources; treat identical
+            // title + start minute as one event.
+            var seen = Set<String>()
+            self.upcomingEvents = merged
+                .sorted { $0.start < $1.start }
+                .filter { event in
+                    let key = "\(event.title.lowercased())|\(Int(event.start.timeIntervalSince1970 / 60))"
+                    return seen.insert(key).inserted
+                }
+        }
+    }
+
+    /// Prompt for access to the Mac's calendars (onboarding's optional step).
+    func requestLocalCalendarAccess() async -> Bool {
+        let granted = await calendarSuggester.requestAccess()
+        if granted { refreshMeetingNameSuggestion() }
+        return granted
+    }
+
+    /// Use an upcoming calendar event as the next call's name.
+    func adoptUpcomingEvent(_ event: UpcomingCalendarEvent) {
+        guard !isRecording, !isStarting, !isProcessing else { return }
+        lastSuggestedMeetingName = event.title
+        clientNameInput = event.title
     }
 
     func startRecording() async {
@@ -416,6 +499,7 @@ final class RecorderManager: ObservableObject {
         isStarting = false
         isRecording = false
         isProcessing = false
+        savePhase = .idle
         activeCallPreferences = nil
         recorder = nil
         audioMixerRef = nil
@@ -439,6 +523,21 @@ final class RecorderManager: ObservableObject {
     func stopRecording() {
         guard isRecording else { return }
         transitionRecordingToProcessing(stoppedAt: Date())
+        recorder?.stop()
+    }
+
+    /// Stops capture and permanently discards everything this call produced:
+    /// media already streamed to cloud storage, the provisional meeting row,
+    /// and the live transcript. The caller is responsible for confirming with
+    /// the user first — this is not undoable.
+    func cancelRecording() {
+        guard isRecording else { return }
+        discardRecorderOnCompletion = true
+        transitionRecordingToProcessing(stoppedAt: Date())
+        // The stop transition prepares the notes panel for processing; a
+        // discarded call has nothing to show, so keep the panel closed.
+        transcriptionManager.showPanel = false
+        transcriptionManager.resetTranscript()
         recorder?.stop()
     }
 
@@ -662,19 +761,19 @@ final class RecorderManager: ObservableObject {
             meeting.saveStage = .transcribing
             meeting.updatedAt = Date()
             try cloudStorage.upsertLocalMeeting(meeting)
-            var transcriptionFailureDescription: String?
+            var transcriptionFailure: Error?
             do {
                 let audioAccess = try await mediaStreamingSession.accessURL(for: .audio, ttl: 60 * 60)
                 try await transcriptionManager.transcribeCloudRecording(audioURL: audioAccess.url)
             } catch {
-                transcriptionFailureDescription = error.localizedDescription
+                transcriptionFailure = error
                 warnings.append("Transcription failed: \(error.localizedDescription)")
             }
 
             let transcript = try CloudTranscriptRetentionPolicy.validatedTranscript(
                 transcriptionManager.fullTranscriptText(),
                 required: pendingPreferences.storeTranscriptInCloud,
-                failureDescription: transcriptionFailureDescription
+                failure: transcriptionFailure
             )
             meeting.transcript = pendingPreferences.storeTranscriptInCloud ? transcript : nil
 
@@ -694,6 +793,7 @@ final class RecorderManager: ObservableObject {
                 insights = MeetingInsights(
                     title: generated.title,
                     summary: generated.summary,
+                    aiNotes: generated.aiNotes,
                     participants: participants,
                     actionItems: generated.actionItems,
                     decisions: generated.decisions
@@ -888,7 +988,7 @@ final class RecorderManager: ObservableObject {
                 hasRetryMedia: meeting.hasAudioRecording || meeting.hasScreenRecording,
                 storeTranscriptInCloud: meeting.preferences.storeTranscriptInCloud
             )
-            var transcriptionFailureDescription: String?
+            var transcriptionFailure: Error?
             if shouldAttemptTranscription {
                 do {
                     let sourceKind: MeetingMediaKind = meeting.hasAudioRecording ? .audio : .screen
@@ -900,7 +1000,7 @@ final class RecorderManager: ObservableObject {
                     )
                     try await transcriptionManager.transcribeCloudRecording(audioURL: access.url)
                 } catch {
-                    transcriptionFailureDescription = error.localizedDescription
+                    transcriptionFailure = error
                     warnings.append("Transcription failed: \(error.localizedDescription)")
                 }
             }
@@ -910,7 +1010,7 @@ final class RecorderManager: ObservableObject {
             let transcript = try CloudTranscriptRetentionPolicy.validatedTranscript(
                 availableTranscript,
                 required: meeting.preferences.storeTranscriptInCloud,
-                failureDescription: transcriptionFailureDescription
+                failure: transcriptionFailure
             )
             meeting.transcript = meeting.preferences.storeTranscriptInCloud ? transcript : nil
 
@@ -935,6 +1035,7 @@ final class RecorderManager: ObservableObject {
                     meeting.insights = MeetingInsights(
                         title: generated.title,
                         summary: generated.summary,
+                        aiNotes: generated.aiNotes,
                         participants: participants,
                         actionItems: generated.actionItems,
                         decisions: generated.decisions
@@ -1208,7 +1309,7 @@ final class RecorderManager: ObservableObject {
                     _ = try CloudTranscriptRetentionPolicy.validatedTranscript(
                         "",
                         required: true,
-                        failureDescription: error.localizedDescription
+                        failure: error
                     )
                 }
                 throw error
@@ -1241,6 +1342,7 @@ final class RecorderManager: ObservableObject {
                 insights = MeetingInsights(
                     title: generated.title,
                     summary: generated.summary,
+                    aiNotes: generated.aiNotes,
                     participants: participants,
                     actionItems: generated.actionItems,
                     decisions: generated.decisions

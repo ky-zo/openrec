@@ -76,9 +76,42 @@ struct MeetingActionItem: Codable, Identifiable, Equatable {
 struct MeetingInsights: Codable, Equatable {
     var title = "Untitled call"
     var summary = ""
+    /// Granola-style markdown meeting notes. Optional in stored records so
+    /// meetings saved before this field existed keep decoding.
+    var aiNotes = ""
     var participants: [String] = []
     var actionItems: [MeetingActionItem] = []
     var decisions: [String] = []
+
+    init(
+        title: String = "Untitled call",
+        summary: String = "",
+        aiNotes: String = "",
+        participants: [String] = [],
+        actionItems: [MeetingActionItem] = [],
+        decisions: [String] = []
+    ) {
+        self.title = title
+        self.summary = summary
+        self.aiNotes = aiNotes
+        self.participants = participants
+        self.actionItems = actionItems
+        self.decisions = decisions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case title, summary, aiNotes, participants, actionItems, decisions
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        title = try values.decodeIfPresent(String.self, forKey: .title) ?? "Untitled call"
+        summary = try values.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        aiNotes = try values.decodeIfPresent(String.self, forKey: .aiNotes) ?? ""
+        participants = try values.decodeIfPresent([String].self, forKey: .participants) ?? []
+        actionItems = try values.decodeIfPresent([MeetingActionItem].self, forKey: .actionItems) ?? []
+        decisions = try values.decodeIfPresent([String].self, forKey: .decisions) ?? []
+    }
 }
 
 struct MeetingPayload: Codable {
@@ -211,13 +244,18 @@ enum OpenRecError: LocalizedError {
     case requestFailed(status: Int, message: String)
     case recordingFailed(String)
     case timedOut(String)
+    /// The provider processed the audio successfully but found no spoken
+    /// words. Distinct from request/auth failures so the UI can avoid
+    /// blaming the API key or the network for a silent recording.
+    case noSpeechDetected(String)
 
     var errorDescription: String? {
         switch self {
         case .invalidConfiguration(let message),
              .invalidResponse(let message),
              .recordingFailed(let message),
-             .timedOut(let message):
+             .timedOut(let message),
+             .noSpeechDetected(let message):
             return message
         case .requestFailed(let status, let message):
             return "Request failed (\(status)): \(message)"

@@ -28,13 +28,14 @@ private enum OnboardingStep: Int, CaseIterable {
     case assemblyAI
     case openAI
     case storage
+    case calendar
     case defaults
     case webhook
     case permissions
     case ready
 
     static let configurationSteps: [OnboardingStep] = [
-        .assemblyAI, .openAI, .storage, .defaults, .webhook, .permissions
+        .assemblyAI, .openAI, .storage, .calendar, .defaults, .webhook, .permissions
     ]
 
     var configurationIndex: Int? {
@@ -73,6 +74,8 @@ struct OpenRecOnboardingView: View {
     @State private var r2Check: OnboardingConnectionCheck = .idle
     @StateObject private var assemblyAIKeyVerifier = APIKeyAutoVerifier()
     @StateObject private var openAIKeyVerifier = APIKeyAutoVerifier()
+    @State private var localCalendarGranted = CalendarMeetingSuggester.accessGranted
+    @State private var isRequestingLocalCalendar = false
 
     init(
         recorderManager: RecorderManager,
@@ -118,6 +121,10 @@ struct OpenRecOnboardingView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
         )
+        // The window uses .fullSizeContentView with a hidden titlebar; without
+        // this the titlebar becomes a top safe-area inset and the card drops
+        // below the traffic lights.
+        .ignoresSafeArea()
         .onAppear(perform: prepareOnboarding)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissions()
@@ -167,6 +174,8 @@ struct OpenRecOnboardingView: View {
             openAIPage
         case .storage:
             storagePage
+        case .calendar:
+            calendarPage
         case .defaults:
             defaultsPage
         case .webhook:
@@ -431,6 +440,109 @@ struct OpenRecOnboardingView: View {
         }
     }
 
+    private var calendarPage: some View {
+        OnboardingPageLayout(
+            icon: "calendar",
+            title: "Name calls after your meetings",
+            body: "Optional. With calendar access, each call starts pre-named after the meeting you're in, and the Meetings window shows what's coming up."
+        ) {
+            VStack(spacing: 10) {
+                if recorderManager.cloudStorage.mode == .managed {
+                    if let calendarEmail = recorderManager.cloudStorage.calendarEmail {
+                        calendarStatusRow(
+                            icon: "checkmark.circle.fill",
+                            tint: .green.opacity(0.9),
+                            title: "Google Calendar connected",
+                            detail: calendarEmail
+                        )
+                    } else if recorderManager.cloudStorage.isManagedSignedIn {
+                        OnboardingPrimaryButton(
+                            title: recorderManager.cloudStorage.isConnectingCalendar ? "Opening Google…" : "Connect Google Calendar",
+                            icon: "calendar.badge.plus",
+                            disabled: recorderManager.cloudStorage.isConnectingCalendar
+                        ) {
+                            Task { _ = await recorderManager.cloudStorage.connectGoogleCalendar() }
+                        }
+                    } else {
+                        calendarStatusRow(
+                            icon: "info.circle",
+                            tint: .white.opacity(0.5),
+                            title: "Sign in first",
+                            detail: "Calendar connections attach to the OpenRec Cloud account from the previous step"
+                        )
+                    }
+                }
+
+                if localCalendarGranted {
+                    calendarStatusRow(
+                        icon: "checkmark.circle.fill",
+                        tint: .green.opacity(0.9),
+                        title: "Mac calendars connected",
+                        detail: "Accounts synced to the macOS Calendar app are included"
+                    )
+                } else {
+                    Button {
+                        guard !isRequestingLocalCalendar else { return }
+                        isRequestingLocalCalendar = true
+                        Task {
+                            localCalendarGranted = await recorderManager.requestLocalCalendarAccess()
+                            isRequestingLocalCalendar = false
+                        }
+                    } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: "desktopcomputer")
+                                .foregroundColor(.white.opacity(0.6))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Use the Mac's calendars")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.88))
+                                Text("Also covers Google accounts synced to the macOS Calendar app")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white.opacity(0.48))
+                            }
+                            Spacer()
+                            Text(isRequestingLocalCalendar ? "Asking…" : "Allow")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 48)
+                        .background(Color.white.opacity(0.065))
+                        .cornerRadius(8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRequestingLocalCalendar)
+                }
+
+                Text("You can skip this — recording works without a calendar, and it can be connected later in Settings.")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.white.opacity(0.42))
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    private func calendarStatusRow(icon: String, tint: Color, title: String, detail: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .foregroundColor(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.88))
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.48))
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 48)
+        .background(Color.white.opacity(0.065))
+        .cornerRadius(8)
+    }
+
     private var defaultsPage: some View {
         OnboardingPageLayout(
             icon: "slider.horizontal.3",
@@ -619,8 +731,13 @@ struct OpenRecOnboardingView: View {
     private var primaryTitle: String {
         switch step {
         case .permissions: return "Finish"
+        case .calendar: return calendarConnected ? "Continue" : "Skip for now"
         default: return "Continue"
         }
+    }
+
+    private var calendarConnected: Bool {
+        localCalendarGranted || recorderManager.cloudStorage.calendarEmail != nil
     }
 
     private var canContinue: Bool {
@@ -681,7 +798,8 @@ struct OpenRecOnboardingView: View {
         case .welcome: move(to: .assemblyAI)
         case .assemblyAI: move(to: .openAI)
         case .openAI: move(to: .storage)
-        case .storage: move(to: .defaults)
+        case .storage: move(to: .calendar)
+        case .calendar: move(to: .defaults)
         case .defaults: move(to: .webhook)
         case .webhook: move(to: .permissions)
         case .permissions: move(to: .ready)
@@ -694,7 +812,8 @@ struct OpenRecOnboardingView: View {
         case .assemblyAI: move(to: isSettings ? .assemblyAI : .welcome)
         case .openAI: move(to: .assemblyAI)
         case .storage: move(to: .openAI)
-        case .defaults: move(to: .storage)
+        case .calendar: move(to: .storage)
+        case .defaults: move(to: .calendar)
         case .webhook: move(to: .defaults)
         case .permissions: move(to: .webhook)
         case .ready: move(to: .permissions)

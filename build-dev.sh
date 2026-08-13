@@ -101,6 +101,10 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>OpenRec needs screen recording permission to capture your screen.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>OpenRec needs microphone access to record your voice.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>OpenRec reads your calendar to pre-fill the meeting name for a call.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>OpenRec reads your calendar to pre-fill the meeting name for a call.</string>
 </dict>
 </plist>
 PLIST

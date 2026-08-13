@@ -26,6 +26,7 @@ interface MeetingPayload {
   insights: {
     title: string;
     summary: string;
+    aiNotes?: string;
     participants: string[];
     actionItems: unknown[];
     decisions: string[];
@@ -42,6 +43,7 @@ interface MeetingRow {
   transcript: string | null;
   title: string;
   summary: string;
+  ai_notes: string | null;
   participants_json: string;
   action_items_json: string;
   decisions_json: string;
@@ -125,6 +127,10 @@ export default {
       const user = await authenticate(request, env);
       if (url.pathname === "/v1/auth/session" && request.method === "DELETE") return await revokeSession(request, env);
       if (url.pathname === "/v1/calendar/current" && request.method === "GET") return await currentCalendarEvent(env, user);
+      if (url.pathname === "/v1/calendar/upcoming" && request.method === "GET") return await upcomingCalendarEvents(url, env, user);
+      if (url.pathname === "/v1/calendar/connect/session" && request.method === "POST") return await createCalendarConnectSession(request, env, user);
+      if (url.pathname === "/v1/calendar/status" && request.method === "GET") return await calendarConnectionStatus(env, user);
+      if (url.pathname === "/v1/calendar/connection" && request.method === "DELETE") return await disconnectCalendar(url, env, user);
       const meeting = url.pathname.match(/^\/v1\/meetings\/([0-9a-f-]+)$/i);
       if (meeting && request.method === "PUT") return await putMeeting(request, env, user, meeting[1]);
       if (meeting && request.method === "GET") return await getMeeting(env, user, meeting[1]);
@@ -210,6 +216,112 @@ async function startGoogle(url: URL, env: Env): Promise<Response> {
   return Response.redirect(google.toString(), 302);
 }
 
+/// Start a calendar-only OAuth grant for the signed-in user. The chosen Google
+/// account is independent of the sign-in identity: storage stays on the
+/// account the user signed in with, while calendar context can come from any
+/// account they pick in Google's account chooser.
+async function createCalendarConnectSession(request: Request, env: Env, user: { id: string }): Promise<Response> {
+  const body = (await request.json().catch(() => ({}))) as { redirect_uri?: string };
+  const redirectURI = body.redirect_uri ?? "";
+  if (redirectURI !== "openrec://calendar" && redirectURI !== "openrec-dev://calendar") {
+    throw new HTTPError(400, "Unsupported app callback URL");
+  }
+  const state = await signState(
+    { redirectURI, expires: Date.now() + 10 * 60_000, nonce: randomToken(16), purpose: "calendar", userID: user.id },
+    env.AUTH_SECRET,
+  );
+  const google = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  google.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
+  google.searchParams.set("redirect_uri", `${env.PUBLIC_BASE_URL}/v1/auth/google/callback`);
+  google.searchParams.set("response_type", "code");
+  google.searchParams.set("scope", "openid email https://www.googleapis.com/auth/calendar.readonly");
+  google.searchParams.set("state", state);
+  google.searchParams.set("access_type", "offline");
+  google.searchParams.set("prompt", "consent select_account");
+  return json({ url: google.toString() });
+}
+
+async function calendarConnectionStatus(env: Env, user: { id: string }): Promise<Response> {
+  const connections = await env.DB.prepare(
+    "SELECT email FROM calendar_connections WHERE user_id = ? ORDER BY created_at"
+  ).bind(user.id).all<{ email: string }>();
+  const emails = (connections.results ?? []).map((row) => row.email);
+  if (emails.length > 0) {
+    return json({ connected: true, email: emails[0], emails });
+  }
+  // Legacy fallback: the sign-in token also carries the calendar scope for
+  // accounts connected before dedicated calendar connections existed.
+  const record = await env.DB.prepare("SELECT google_refresh_token_cipher FROM users WHERE id = ?")
+    .bind(user.id).first<{ google_refresh_token_cipher: string | null }>();
+  if (record?.google_refresh_token_cipher) {
+    return json({ connected: true, email: null, emails: [] });
+  }
+  return json({ connected: false, email: null, emails: [] });
+}
+
+async function disconnectCalendar(url: URL, env: Env, user: { id: string }): Promise<Response> {
+  const email = url.searchParams.get("email");
+  if (email) {
+    await env.DB.prepare("DELETE FROM calendar_connections WHERE user_id = ? AND email = ?")
+      .bind(user.id, email).run();
+  } else {
+    await env.DB.prepare("DELETE FROM calendar_connections WHERE user_id = ?").bind(user.id).run();
+  }
+  // Clear the legacy single-connection columns either way.
+  await env.DB.prepare(
+    "UPDATE users SET google_calendar_refresh_token_cipher = NULL, google_calendar_email = NULL, updated_at = ? WHERE id = ?"
+  ).bind(new Date().toISOString(), user.id).run();
+  return json({ ok: true });
+}
+
+async function finishGoogleCalendarConnect(
+  code: string,
+  state: { redirectURI: string; expires: number; userID?: string },
+  env: Env,
+): Promise<Response> {
+  if (!state.userID) throw new HTTPError(400, "Invalid calendar connect request");
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: `${env.PUBLIC_BASE_URL}/v1/auth/google/callback`,
+      grant_type: "authorization_code",
+    }),
+  });
+  if (!tokenResponse.ok) throw new HTTPError(502, "Google token exchange failed");
+  const tokens = (await tokenResponse.json()) as { access_token?: string; refresh_token?: string };
+  if (!tokens.access_token) throw new HTTPError(502, "Google returned no access token");
+  if (!tokens.refresh_token) throw new HTTPError(502, "Google returned no offline calendar access. Try connecting again.");
+  const profileResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { authorization: `Bearer ${tokens.access_token}` },
+  });
+  if (!profileResponse.ok) throw new HTTPError(502, "Google profile lookup failed");
+  const profile = (await profileResponse.json()) as GoogleProfile;
+  const email = profile.email ?? "Google account";
+
+  // Additive: each granted account becomes its own connection; reconnecting
+  // the same account just refreshes its token.
+  await env.DB.prepare(`
+    INSERT INTO calendar_connections (id, user_id, email, refresh_token_cipher, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, email) DO UPDATE SET refresh_token_cipher = excluded.refresh_token_cipher
+  `).bind(
+    crypto.randomUUID(),
+    state.userID,
+    email,
+    await encryptSecret(tokens.refresh_token, env.AUTH_SECRET),
+    new Date().toISOString(),
+  ).run();
+
+  const callback = new URL(state.redirectURI);
+  callback.searchParams.set("status", "connected");
+  callback.searchParams.set("email", email);
+  return new Response(null, { status: 302, headers: { location: callback.toString(), "cache-control": "no-store" } });
+}
+
 async function finishGoogle(url: URL, env: Env): Promise<Response> {
   const oauthError = url.searchParams.get("error");
   if (oauthError) throw new HTTPError(400, `Google sign-in failed: ${oauthError}`);
@@ -217,8 +329,14 @@ async function finishGoogle(url: URL, env: Env): Promise<Response> {
   const stateValue = url.searchParams.get("state");
   if (!code || !stateValue) throw new HTTPError(400, "Missing Google authorization response");
   const state = await verifyState(stateValue, env.AUTH_SECRET);
+  if (state.expires < Date.now()) throw new HTTPError(400, "Expired sign-in request");
+  if (state.purpose === "calendar") {
+    const supportedCalendarCallback = state.redirectURI === "openrec://calendar" || state.redirectURI === "openrec-dev://calendar";
+    if (!supportedCalendarCallback) throw new HTTPError(400, "Unsupported calendar callback URL");
+    return await finishGoogleCalendarConnect(code, state, env);
+  }
   const supportedCallback = state.redirectURI === "openrec://auth" || state.redirectURI === "openrec-dev://auth";
-  if (state.expires < Date.now() || !supportedCallback) throw new HTTPError(400, "Expired sign-in request");
+  if (!supportedCallback) throw new HTTPError(400, "Expired sign-in request");
 
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -311,16 +429,16 @@ async function putMeeting(request: Request, env: Env, user: { id: string }, id: 
   const saved = await env.DB.prepare(`
     INSERT INTO meetings (
       id, user_id, started_at, ended_at, duration_seconds, call_app, call_title, transcript,
-      title, summary, participants_json, action_items_json, decisions_json, created_at, updated_at
+      title, summary, ai_notes, participants_json, action_items_json, decisions_json, created_at, updated_at
     )
-    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE NOT EXISTS (
       SELECT 1 FROM meeting_deletions WHERE meeting_id = ? AND user_id = ?
     )
     ON CONFLICT(id, user_id) DO UPDATE SET
       started_at=excluded.started_at, ended_at=excluded.ended_at, duration_seconds=excluded.duration_seconds,
       call_app=excluded.call_app, call_title=excluded.call_title, transcript=excluded.transcript,
-      title=excluded.title, summary=excluded.summary, participants_json=excluded.participants_json,
+      title=excluded.title, summary=excluded.summary, ai_notes=excluded.ai_notes, participants_json=excluded.participants_json,
       action_items_json=excluded.action_items_json, decisions_json=excluded.decisions_json, updated_at=excluded.updated_at
     WHERE NOT EXISTS (
       SELECT 1 FROM meeting_deletions WHERE meeting_id = excluded.id AND user_id = excluded.user_id
@@ -328,7 +446,7 @@ async function putMeeting(request: Request, env: Env, user: { id: string }, id: 
   `).bind(
     id.toLowerCase(), user.id, body.startedAt, body.endedAt, body.durationSeconds,
     body.callApp ?? null, body.callTitle ?? null, body.transcript,
-    body.insights.title, body.insights.summary, JSON.stringify(body.insights.participants),
+    body.insights.title, body.insights.summary, body.insights.aiNotes ?? "", JSON.stringify(body.insights.participants),
     JSON.stringify(body.insights.actionItems), JSON.stringify(body.insights.decisions), now, now,
     id.toLowerCase(), user.id,
   ).run();
@@ -1015,7 +1133,7 @@ async function listMeetings(url: URL, env: Env, user: { id: string }): Promise<R
   if (!Number.isSafeInteger(offset) || offset > 1_000_000) throw new HTTPError(400, "Meeting offset is out of range");
   const pageSize = 100;
   const result = await env.DB.prepare(`
-    SELECT id, started_at, ended_at, duration_seconds, call_app, call_title, title, summary,
+    SELECT id, started_at, ended_at, duration_seconds, call_app, call_title, title, summary, ai_notes,
            participants_json, action_items_json, decisions_json,
            screen_object_key, audio_object_key, created_at, updated_at
     FROM meetings
@@ -1028,6 +1146,7 @@ async function listMeetings(url: URL, env: Env, user: { id: string }): Promise<R
         ? = '' OR instr(
           lower(
             coalesce(title, '') || ' ' || coalesce(call_title, '') || ' ' || coalesce(summary, '') || ' ' ||
+            coalesce(ai_notes, '') || ' ' ||
             coalesce(transcript, '') || ' ' || coalesce(participants_json, '') || ' ' ||
             coalesce(action_items_json, '') || ' ' || coalesce(decisions_json, '')
           ),
@@ -1044,7 +1163,7 @@ async function listMeetings(url: URL, env: Env, user: { id: string }): Promise<R
 async function getMeeting(env: Env, user: { id: string }, meetingID: string): Promise<Response> {
   const row = await env.DB.prepare(`
     SELECT id, started_at, ended_at, duration_seconds, call_app, call_title, transcript,
-           title, summary, participants_json, action_items_json, decisions_json,
+           title, summary, ai_notes, participants_json, action_items_json, decisions_json,
            screen_object_key, audio_object_key, created_at, updated_at
     FROM meetings WHERE id = ? AND user_id = ?
       AND NOT EXISTS (
@@ -1224,6 +1343,7 @@ function meetingSummary(row: MeetingSummaryRow) {
     insights: {
       title: row.title,
       summary: row.summary,
+      aiNotes: row.ai_notes ?? "",
       participants: parseJSONArray<string>(row.participants_json, "participants"),
       actionItems: parseJSONArray<unknown>(row.action_items_json, "action items"),
       decisions: parseJSONArray<string>(row.decisions_json, "decisions"),
@@ -1379,55 +1499,152 @@ async function mediaAccessHMACKey(secret: string, usages: Array<"sign" | "verify
   );
 }
 
-async function currentCalendarEvent(env: Env, user: { id: string }): Promise<Response> {
-  const record = await env.DB.prepare("SELECT google_refresh_token_cipher FROM users WHERE id = ?")
-    .bind(user.id).first<{ google_refresh_token_cipher: string | null }>();
-  if (!record?.google_refresh_token_cipher) throw new HTTPError(409, "Reconnect Google to enable calendar context");
-  const refreshToken = await decryptSecret(record.google_refresh_token_cipher, env.AUTH_SECRET);
-  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
-  if (!tokenResponse.ok) throw new HTTPError(502, "Could not refresh Google Calendar access");
-  const token = (await tokenResponse.json()) as { access_token?: string };
-  if (!token.access_token) throw new HTTPError(502, "Google returned no calendar access token");
-
-  const now = Date.now();
-  const calendarURL = new URL("https://www.googleapis.com/calendar/v3/calendars/primary/events");
-  calendarURL.searchParams.set("timeMin", new Date(now - 30 * 60_000).toISOString());
-  calendarURL.searchParams.set("timeMax", new Date(now + 60 * 60_000).toISOString());
-  calendarURL.searchParams.set("singleEvents", "true");
-  calendarURL.searchParams.set("orderBy", "startTime");
-  calendarURL.searchParams.set("maxResults", "10");
-  const eventsResponse = await fetch(calendarURL, { headers: { authorization: `Bearer ${token.access_token}` } });
-  if (!eventsResponse.ok) throw new HTTPError(502, "Could not read Google Calendar events");
-  const result = (await eventsResponse.json()) as { items?: GoogleCalendarEvent[] };
-  const events = (result.items ?? []).filter((event) => event.status !== "cancelled" && event.start?.dateTime && event.end?.dateTime);
-  const active = events.find((event) => Date.parse(event.start!.dateTime!) <= now && Date.parse(event.end!.dateTime!) >= now);
-    const upcoming = events.find((event) => {
-      const start = Date.parse(event.start!.dateTime!);
-      return start > now && start <= now + 15 * 60_000;
+/// Fetch, dedupe, and time-sort events from every calendar the user keeps
+/// ticked in Google Calendar (falling back to "primary"), for the given window.
+/// Fetch events for one granted Google account across every calendar in its
+/// list. Returns [] on any per-account failure so one dead connection cannot
+/// take down the merged view.
+async function fetchEventsForConnection(
+  env: Env,
+  refreshTokenCipher: string,
+  timeMin: Date,
+  timeMax: Date,
+): Promise<GoogleCalendarEvent[]> {
+  try {
+    const refreshToken = await decryptSecret(refreshTokenCipher, env.AUTH_SECRET);
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: env.GOOGLE_CLIENT_ID,
+        client_secret: env.GOOGLE_CLIENT_SECRET,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+      }),
     });
+    if (!tokenResponse.ok) return [];
+    const token = (await tokenResponse.json()) as { access_token?: string };
+    if (!token.access_token) return [];
+
+    // Read every calendar in the account's list, not just "primary" —
+    // secondary, shared, and subscribed calendars all count. Primary and
+    // Google-"selected" calendars go first so the cap trims the least-relevant.
+    let calendarIDs = ["primary"];
+    const listURL = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
+    listURL.searchParams.set("maxResults", "100");
+    listURL.searchParams.set("fields", "items(id,primary,selected,deleted)");
+    const listResponse = await fetch(listURL, { headers: { authorization: `Bearer ${token.access_token}` } });
+    if (listResponse.ok) {
+      const list = (await listResponse.json()) as { items?: Array<{ id?: string; primary?: boolean; selected?: boolean; deleted?: boolean }> };
+      const rank = (calendar: { primary?: boolean; selected?: boolean }) =>
+        calendar.primary ? 0 : calendar.selected ? 1 : 2;
+      const chosen = (list.items ?? [])
+        .filter((calendar) => calendar.id && !calendar.deleted)
+        .sort((a, b) => rank(a) - rank(b))
+        .map((calendar) => calendar.id!)
+        .slice(0, 10);
+      if (chosen.length > 0) calendarIDs = chosen;
+    }
+
+    const responses = await Promise.all(calendarIDs.map(async (calendarID) => {
+      const calendarURL = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarID)}/events`);
+      calendarURL.searchParams.set("timeMin", timeMin.toISOString());
+      calendarURL.searchParams.set("timeMax", timeMax.toISOString());
+      calendarURL.searchParams.set("singleEvents", "true");
+      calendarURL.searchParams.set("orderBy", "startTime");
+      calendarURL.searchParams.set("maxResults", "30");
+      const eventsResponse = await fetch(calendarURL, { headers: { authorization: `Bearer ${token.access_token}` } });
+      // A single unreadable calendar (revoked share, permissions) must not
+      // break calendar context for the rest.
+      if (!eventsResponse.ok) return [] as GoogleCalendarEvent[];
+      const result = (await eventsResponse.json()) as { items?: GoogleCalendarEvent[] };
+      return result.items ?? [];
+    }));
+    return responses.flat();
+  } catch {
+    return [];
+  }
+}
+
+async function fetchGoogleCalendarEvents(
+  env: Env,
+  user: { id: string },
+  timeMin: Date,
+  timeMax: Date,
+): Promise<GoogleCalendarEvent[]> {
+  const connections = await env.DB.prepare(
+    "SELECT refresh_token_cipher FROM calendar_connections WHERE user_id = ? ORDER BY created_at"
+  ).bind(user.id).all<{ refresh_token_cipher: string }>();
+  let ciphers = (connections.results ?? []).map((row) => row.refresh_token_cipher);
+
+  if (ciphers.length === 0) {
+    // Legacy fallback from before dedicated calendar connections existed.
+    const record = await env.DB.prepare("SELECT google_refresh_token_cipher FROM users WHERE id = ?")
+      .bind(user.id).first<{ google_refresh_token_cipher: string | null }>();
+    if (!record?.google_refresh_token_cipher) throw new HTTPError(409, "Connect Google Calendar to enable calendar context");
+    ciphers = [record.google_refresh_token_cipher];
+  }
+
+  const perAccount = await Promise.all(
+    ciphers.slice(0, 5).map((cipher) => fetchEventsForConnection(env, cipher, timeMin, timeMax)),
+  );
+  const seenEventIDs = new Set<string>();
+  return perAccount
+    .flat()
+    .filter((event) => event.status !== "cancelled" && event.start?.dateTime && event.end?.dateTime)
+    // The same meeting shows up on every calendar the user was invited
+    // through; keep the first copy only.
+    .filter((event) => {
+      if (!event.id) return true;
+      if (seenEventIDs.has(event.id)) return false;
+      seenEventIDs.add(event.id);
+      return true;
+    })
+    .sort((a, b) => Date.parse(a.start!.dateTime!) - Date.parse(b.start!.dateTime!));
+}
+
+function calendarEventPayload(event: GoogleCalendarEvent) {
+  return {
+    id: event.id,
+    title: event.summary ?? "Calendar call",
+    startsAt: event.start?.dateTime,
+    endsAt: event.end?.dateTime,
+    participants: (event.attendees ?? [])
+      .filter((attendee) => attendee.responseStatus !== "declined")
+      .map((attendee) => attendee.displayName || attendee.email)
+      .filter(Boolean),
+  };
+}
+
+async function currentCalendarEvent(env: Env, user: { id: string }): Promise<Response> {
+  const now = Date.now();
+  const events = await fetchGoogleCalendarEvents(
+    env,
+    user,
+    new Date(now - 30 * 60_000),
+    new Date(now + 60 * 60_000),
+  );
+  const active = events.find((event) => Date.parse(event.start!.dateTime!) <= now && Date.parse(event.end!.dateTime!) >= now);
+  const upcoming = events.find((event) => {
+    const start = Date.parse(event.start!.dateTime!);
+    return start > now && start <= now + 15 * 60_000;
+  });
   const event = active ?? upcoming;
   if (!event) return json({ event: null });
-  return json({
-    event: {
-      id: event.id,
-      title: event.summary ?? "Calendar call",
-      startsAt: event.start?.dateTime,
-      endsAt: event.end?.dateTime,
-      participants: (event.attendees ?? [])
-        .filter((attendee) => attendee.responseStatus !== "declined")
-        .map((attendee) => attendee.displayName || attendee.email)
-        .filter(Boolean),
-    },
-  });
+  return json({ event: calendarEventPayload(event) });
+}
+
+/// Ongoing and upcoming events for the Meetings window's "Coming up" list.
+async function upcomingCalendarEvents(url: URL, env: Env, user: { id: string }): Promise<Response> {
+  const days = Math.max(1, Math.min(31, Number(url.searchParams.get("days")) || 7));
+  const now = Date.now();
+  const events = await fetchGoogleCalendarEvents(
+    env,
+    user,
+    new Date(now),
+    new Date(now + days * 24 * 60 * 60_000),
+  );
+  return json({ events: events.slice(0, 30).map(calendarEventPayload) });
 }
 
 interface GoogleCalendarEvent {
@@ -1469,13 +1686,21 @@ async function signState(payload: object, secret: string): Promise<string> {
   return `${encoded}.${base64url(new Uint8Array(signature))}`;
 }
 
-async function verifyState(value: string, secret: string): Promise<{ redirectURI: string; expires: number }> {
+async function verifyState(
+  value: string,
+  secret: string,
+): Promise<{ redirectURI: string; expires: number; purpose?: string; userID?: string }> {
   const [payload, signature] = value.split(".");
   if (!payload || !signature) throw new HTTPError(400, "Invalid OAuth state");
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
   const valid = await crypto.subtle.verify("HMAC", key, fromBase64url(signature), new TextEncoder().encode(payload));
   if (!valid) throw new HTTPError(400, "Invalid OAuth state signature");
-  return JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as { redirectURI: string; expires: number };
+  return JSON.parse(new TextDecoder().decode(fromBase64url(payload))) as {
+    redirectURI: string;
+    expires: number;
+    purpose?: string;
+    userID?: string;
+  };
 }
 
 function base64url(value: Uint8Array): string {

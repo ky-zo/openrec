@@ -1,7 +1,6 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
   <rect x="0" y="0" width="1024" height="1024" rx="220" fill="#0B0C0C"/>
-  <circle cx="512" cy="512" r="372" fill="#1F1F1F"/>
-  <g fill="#E0E0E0">
+  <g fill="#E0E0E0" transform="translate(512 512) scale(1.7) translate(-512 -512)">
     <rect x="357.2" y="467.28" width="27.52" height="89.44" rx="13.76"/>
     <rect x="412.24" y="398.48" width="27.52" height="227.04" rx="13.76"/>
     <rect x="474.16" y="340" width="27.52" height="344" rx="13.76"/>

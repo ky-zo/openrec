@@ -51,4 +51,9 @@ rm -f "$ROOT_DIR/web/src/app/favicon.ico"
   "$ASSET_CATALOG/app-icon-256.png" \
   --out "$ROOT_DIR/web/src/app/favicon.ico" >/dev/null
 
+# Next's app router auto-serves these as <link rel="icon"> and
+# <link rel="apple-touch-icon"> based on their filenames.
+render_icon 512 "$ROOT_DIR/web/src/app/icon.png"
+render_icon 180 "$ROOT_DIR/web/src/app/apple-icon.png"
+
 echo "Regenerated OpenRec app, Xcode, and web icons from assets/app-icon.svg"

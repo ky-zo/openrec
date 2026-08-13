@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT,
   avatar_url TEXT,
   google_refresh_token_cipher TEXT,
+  google_calendar_refresh_token_cipher TEXT,
+  google_calendar_email TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -36,6 +38,7 @@ CREATE TABLE IF NOT EXISTS meetings (
   transcript TEXT,
   title TEXT NOT NULL,
   summary TEXT NOT NULL,
+  ai_notes TEXT NOT NULL DEFAULT '',
   participants_json TEXT NOT NULL,
   action_items_json TEXT NOT NULL,
   decisions_json TEXT NOT NULL,
@@ -101,3 +104,13 @@ CREATE TABLE IF NOT EXISTS meeting_deletions (
 
 CREATE INDEX IF NOT EXISTS meeting_media_user_meeting_idx ON meeting_media(user_id, meeting_id);
 CREATE INDEX IF NOT EXISTS media_uploads_owner_idx ON media_uploads(user_id, meeting_id, kind, status);
+
+CREATE TABLE IF NOT EXISTS calendar_connections (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  refresh_token_cipher TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, email)
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_connections_user ON calendar_connections(user_id);

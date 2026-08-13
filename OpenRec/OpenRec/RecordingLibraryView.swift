@@ -26,16 +26,39 @@ enum MeetingLibraryPresentation {
 }
 
 private enum MeetingDetailTab: String, CaseIterable, Identifiable {
-    case summary = "Summary"
+    case summary = "AI Notes"
     case transcript = "Transcript"
 
     var id: String { rawValue }
 }
 
+private enum LibraryTab: Int, CaseIterable {
+    case comingUp
+    case past
+
+    var label: String {
+        switch self {
+        case .comingUp: return "Coming up"
+        case .past: return "Past"
+        }
+    }
+}
+
+private struct UpcomingDayGroup {
+    let day: Date
+    let events: [UpcomingCalendarEvent]
+}
+
 struct RecordingLibraryView: View {
     @ObservedObject var recorderManager: RecorderManager
     @ObservedObject var navigation: RecordingLibraryNavigation
+    var onOpenSettings: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // Coming up is the main view; opening a specific meeting switches to Past.
+    @State private var tab: LibraryTab = .comingUp
+    @State private var tabMovesForward = true
+    @State private var adoptedEventID: String?
+    @State private var localCalendarGranted = CalendarMeetingSuggester.accessGranted
     @State private var searchText = ""
     @State private var selectedID: UUID?
     @State private var detail: MeetingRecord?
@@ -53,6 +76,7 @@ struct RecordingLibraryView: View {
     @State private var isSearching = false
     @State private var searchError: String?
     @State private var handledSelectionToken: UUID?
+    @State private var deletingMeetingID: UUID?
 
     private let background = Color(red: 0.105, green: 0.11, blue: 0.115)
     private let sidebar = Color(red: 0.13, green: 0.135, blue: 0.14)
@@ -70,6 +94,7 @@ struct RecordingLibraryView: View {
                 meeting.callTitle ?? "",
                 meeting.callApp ?? "",
                 meeting.insights.summary,
+                meeting.insights.aiNotes,
                 meeting.insights.participants.joined(separator: " "),
                 meeting.transcript ?? "",
             ].joined(separator: " ").localizedCaseInsensitiveContains(query)
@@ -92,8 +117,13 @@ struct RecordingLibraryView: View {
                 detailPane
             }
         }
+        // The titlebar is hidden and the window uses fullSizeContentView, so
+        // reclaim its safe-area strip; the header row leaves room for the
+        // traffic lights instead.
+        .ignoresSafeArea()
         .frame(minWidth: 860, minHeight: 580)
         .task {
+            recorderManager.refreshUpcomingEvents()
             await recorderManager.cloudStorage.refreshLibrary()
             selectInitialMeeting()
         }
@@ -123,6 +153,9 @@ struct RecordingLibraryView: View {
                 Task { await recorderManager.cloudStorage.refreshLibrary() }
             }
         }
+        .onChange(of: recorderManager.cloudStorage.isManagedSignedIn) { _ in
+            recorderManager.refreshUpcomingEvents()
+        }
         .onChange(of: recorderManager.cloudStorage.libraryMeetings) { _ in
             selectInitialMeeting()
             if let id = selectedID, let updated = recorderManager.cloudStorage.libraryMeetings.first(where: { $0.id == id }) {
@@ -147,14 +180,25 @@ struct RecordingLibraryView: View {
 
     private var librarySidebar: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Circle().fill(accent).frame(width: 7, height: 7)
                 Text("Meetings")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(primary)
                 Spacer()
+                if let onOpenSettings {
+                    Button(action: onOpenSettings) {
+                        Image(systemName: "gearshape")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(secondary)
+                    .disabled(recorderManager.isRecording || recorderManager.isProcessing)
+                    .opacity(recorderManager.isRecording || recorderManager.isProcessing ? 0.4 : 1)
+                    .help("Settings")
+                }
                 Button {
                     Task { await recorderManager.cloudStorage.refreshLibrary() }
+                    recorderManager.refreshUpcomingEvents()
                 } label: {
                     if recorderManager.cloudStorage.isLoadingLibrary {
                         ProgressView().controlSize(.small)
@@ -167,89 +211,66 @@ struct RecordingLibraryView: View {
                 .disabled(recorderManager.cloudStorage.isLoadingLibrary)
                 .help("Refresh meetings")
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
+            // The window titlebar is reclaimed as content, so the header sits
+            // beside the traffic lights instead of below an empty bar.
+            .padding(.leading, 74)
+            .padding(.trailing, 14)
+            .padding(.top, 9)
+            .padding(.bottom, 8)
 
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(secondary)
-                TextField(
-                    "",
-                    text: $searchText,
-                    prompt: Text("Search meetings").foregroundColor(Color.white.opacity(0.34))
-                )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundColor(primary)
-                if isSearching { ProgressView().controlSize(.mini) }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(Color.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .padding(.horizontal, 12)
-            .padding(.bottom, 10)
+            libraryTabBar
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
 
-            if let searchError {
-                Label(searchError, systemImage: "magnifyingglass")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundColor(Color.orange.opacity(0.88))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
+            if tab == .past {
+                searchField
+                if let searchError {
+                    Label(searchError, systemImage: "magnifyingglass")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(Color.orange.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
+                }
+                if let error = recorderManager.cloudStorage.libraryError {
+                    Label(error, systemImage: "icloud.slash")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Color.orange.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 10)
+                }
             }
 
-            if let error = recorderManager.cloudStorage.libraryError {
-                Label(error, systemImage: "icloud.slash")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(Color.orange.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 10)
-            }
-
-            if visibleMeetings.isEmpty {
-                VStack(spacing: 9) {
-                    Image(systemName: "rectangle.stack")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.22))
-                    Text(searchText.isEmpty ? "Your calls will appear here" : "No matching meetings")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(secondary)
-                    if searchText.isEmpty {
-                        Text("Record a call and OpenRec will keep its transcript, next steps, and selected recordings together.")
-                            .font(.system(size: 10))
-                            .foregroundColor(Color.white.opacity(0.38))
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 210)
+            // One persistent list; the tabs only filter which half of the
+            // timeline is visible (future ascending vs. past descending).
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if tab == .comingUp {
+                        comingUpContent
+                            .transition(tabTransition)
+                    } else {
+                        pastListContent
+                            .transition(tabTransition)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(visibleMeetings) { meeting in
-                            MeetingRow(
-                                meeting: meeting,
-                                selected: selectedID == meeting.id,
-                                accent: accent
-                            ) {
-                                selectMeeting(meeting, forceReload: true)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 12)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .clipped()
+
+            if tab == .comingUp {
+                calendarSourcesBar
             }
 
             HStack(spacing: 6) {
                 Image(systemName: recorderManager.cloudStorage.mode == .managed ? "icloud" : "shippingbox")
                 Text(recorderManager.cloudStorage.mode.label)
                 Spacer()
-                Text("\(recorderManager.cloudStorage.libraryMeetings.count)")
+                Text(
+                    tab == .comingUp
+                        ? "\(recorderManager.upcomingEvents.count) upcoming"
+                        : "\(recorderManager.cloudStorage.libraryMeetings.count)"
+                )
             }
             .font(.system(size: 10, weight: .medium))
             .foregroundColor(Color.white.opacity(0.4))
@@ -258,6 +279,373 @@ struct RecordingLibraryView: View {
             .background(Color.black.opacity(0.12))
         }
         .background(sidebar)
+    }
+
+    private var libraryTabBar: some View {
+        HStack(spacing: 2) {
+            ForEach(LibraryTab.allCases, id: \.rawValue) { candidate in
+                let isSelected = candidate == tab
+                Button {
+                    switchTab(to: candidate)
+                } label: {
+                    Text(candidate.label)
+                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? primary : secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(isSelected ? Color.white.opacity(0.12) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var tabTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        let insertion = AnyTransition.opacity
+            .combined(with: .offset(x: tabMovesForward ? 30 : -30))
+        let removal = AnyTransition.opacity
+            .combined(with: .offset(x: tabMovesForward ? -18 : 18))
+        return .asymmetric(insertion: insertion, removal: removal)
+    }
+
+    private func switchTab(to newTab: LibraryTab) {
+        guard newTab != tab else { return }
+        tabMovesForward = newTab.rawValue > tab.rawValue
+        withAnimation(
+            reduceMotion
+                ? .easeOut(duration: 0.12)
+                : .timingCurve(0.23, 1, 0.32, 1, duration: 0.26)
+        ) {
+            tab = newTab
+        }
+        if newTab == .comingUp { recorderManager.refreshUpcomingEvents() }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(secondary)
+            TextField(
+                "",
+                text: $searchText,
+                prompt: Text("Search meetings").foregroundColor(Color.white.opacity(0.34))
+            )
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(primary)
+            if isSearching { ProgressView().controlSize(.mini) }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(Color.white.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+    }
+
+    @ViewBuilder
+    private var pastListContent: some View {
+        if visibleMeetings.isEmpty {
+            VStack(spacing: 9) {
+                Image(systemName: "rectangle.stack")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.22))
+                Text(searchText.isEmpty ? "Your calls will appear here" : "No matching meetings")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(secondary)
+                if searchText.isEmpty {
+                    Text("Record a call and OpenRec will keep its transcript, next steps, and selected recordings together.")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color.white.opacity(0.38))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 210)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 70)
+        } else {
+            LazyVStack(spacing: 4) {
+                ForEach(visibleMeetings) { meeting in
+                    MeetingRow(
+                        meeting: meeting,
+                        selected: selectedID == meeting.id,
+                        accent: accent
+                    ) {
+                        selectMeeting(meeting, forceReload: true)
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            confirmAndDelete(meeting)
+                        } label: {
+                            Label("Delete Meeting…", systemImage: "trash")
+                        }
+                        .disabled(meeting.saveStatus == .processing || deletingMeetingID != nil)
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private var upcomingDayGroups: [UpcomingDayGroup] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: recorderManager.upcomingEvents) {
+            calendar.startOfDay(for: $0.start)
+        }
+        var days = grouped.keys.sorted().map { day in
+            UpcomingDayGroup(day: day, events: grouped[day]!.sorted { $0.start < $1.start })
+        }
+        // Granola-style: today is always shown, even when it has nothing left.
+        let today = calendar.startOfDay(for: Date())
+        if !days.contains(where: { $0.day == today }) {
+            days.insert(UpcomingDayGroup(day: today, events: []), at: 0)
+        }
+        return days
+    }
+
+    @ViewBuilder
+    private var comingUpContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if recorderManager.cloudStorage.calendarEmails.isEmpty {
+                connectCalendarCard
+                    .padding(.horizontal, 12)
+                    .padding(.top, 2)
+                    .padding(.bottom, 10)
+            }
+
+            if recorderManager.upcomingEvents.isEmpty && recorderManager.isLoadingUpcomingEvents {
+                HStack {
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                    Spacer()
+                }
+                .padding(.top, 40)
+            } else if recorderManager.upcomingEvents.isEmpty {
+                if recorderManager.googleCalendarActive || localCalendarGranted {
+                    VStack(spacing: 9) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.22))
+                        Text("Nothing on the calendar")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(secondary)
+                        Text("Ongoing and upcoming meetings from your connected calendars will appear here, ready to record.")
+                            .font(.system(size: 10))
+                            .foregroundColor(Color.white.opacity(0.38))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 220)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 56)
+                }
+                // Otherwise the connect card above is the whole story.
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(upcomingDayGroups.enumerated()), id: \.element.day) { index, group in
+                        if index > 0 {
+                            Color.white.opacity(0.07)
+                                .frame(height: 1)
+                                .padding(.horizontal, 4)
+                        }
+                        UpcomingDayRow(
+                            group: group,
+                            accent: accent,
+                            adoptedEventID: adoptedEventID,
+                            onAdopt: adoptEvent
+                        )
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
+            }
+        }
+        .onAppear {
+            localCalendarGranted = CalendarMeetingSuggester.accessGranted
+            recorderManager.refreshUpcomingEvents()
+            Task { await recorderManager.cloudStorage.refreshCalendarConnectionStatus() }
+        }
+    }
+
+    private var sourceRowDivider: some View {
+        Color.white.opacity(0.06).frame(height: 1)
+            .padding(.leading, 30)
+    }
+
+    /// Pinned calendar-sources bar: one row per connected Google account
+    /// (additive — connect as many as needed, all merged into one list), plus
+    /// the Mac's calendars. Never scrolls away or depends on an empty state.
+    private var calendarSourcesBar: some View {
+        VStack(spacing: 0) {
+            ForEach(recorderManager.cloudStorage.calendarEmails, id: \.self) { email in
+                sourceRow(
+                    icon: "calendar",
+                    title: email,
+                    value: "Google Calendar",
+                    actionTitle: "Remove",
+                    busy: false,
+                    help: "Stop reading this account's calendars"
+                ) {
+                    Task {
+                        await recorderManager.cloudStorage.disconnectCalendar(email: email)
+                        recorderManager.refreshUpcomingEvents()
+                    }
+                }
+                sourceRowDivider
+            }
+
+            sourceRow(
+                icon: recorderManager.cloudStorage.calendarEmails.isEmpty ? "calendar.badge.plus" : "plus",
+                title: recorderManager.cloudStorage.calendarEmails.isEmpty
+                    ? "Google Calendar"
+                    : "Add another Google account",
+                value: recorderManager.cloudStorage.calendarEmails.isEmpty
+                    ? "Not connected"
+                    : "All accounts merge into one list",
+                actionTitle: recorderManager.cloudStorage.isConnectingCalendar ? "Opening…" : "Connect",
+                busy: recorderManager.cloudStorage.isConnectingCalendar,
+                help: "Grant read-only calendar access for any Google account — your meeting library stays on the account you signed in with."
+            ) {
+                connectGoogleCalendar()
+            }
+
+            if !localCalendarGranted {
+                sourceRowDivider
+                sourceRow(
+                    icon: "desktopcomputer",
+                    title: "Mac calendars",
+                    value: "Not connected",
+                    actionTitle: "Allow",
+                    busy: false,
+                    help: "Include calendars from the macOS Calendar app"
+                ) {
+                    Task {
+                        localCalendarGranted = await recorderManager.requestLocalCalendarAccess()
+                        recorderManager.refreshUpcomingEvents()
+                    }
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+    }
+
+    private func sourceRow(
+        icon: String,
+        title: String,
+        value: String,
+        actionTitle: String,
+        busy: Bool,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.45))
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.78))
+                Text(value)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.42))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            Button(action: action) {
+                Text(actionTitle)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.88))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.white.opacity(0.1))
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+            .help(help)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+    }
+
+    private var connectCalendarCard: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label("Google Calendar", systemImage: "calendar.badge.plus")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(primary)
+            Text("Connect one or more Google accounts and their meetings appear here on one list — each call starts pre-named after the one you're in.")
+                .font(.system(size: 10.5))
+                .foregroundColor(Color.white.opacity(0.52))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(
+                recorderManager.cloudStorage.isConnectingCalendar
+                    ? "Opening Google…"
+                    : "Connect Google Calendar"
+            ) {
+                connectGoogleCalendar()
+            }
+            .buttonStyle(LibraryButtonStyle(prominent: true))
+            .disabled(recorderManager.cloudStorage.isConnectingCalendar)
+            .padding(.top, 3)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    private func connectGoogleCalendar() {
+        if recorderManager.cloudStorage.mode == .managed && recorderManager.cloudStorage.isManagedSignedIn {
+            Task {
+                if await recorderManager.cloudStorage.connectGoogleCalendar() {
+                    recorderManager.refreshUpcomingEvents()
+                }
+            }
+        } else {
+            // Calendar connections attach to the OpenRec Cloud account, so
+            // signed-out and own-R2 users start from Settings.
+            onOpenSettings?()
+        }
+    }
+
+    private func adoptEvent(_ event: UpcomingCalendarEvent) {
+        recorderManager.adoptUpcomingEvent(event)
+        withAnimation(.easeOut(duration: 0.15)) { adoptedEventID = event.id }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            if adoptedEventID == event.id {
+                withAnimation(.easeOut(duration: 0.2)) { adoptedEventID = nil }
+            }
+        }
     }
 
     @ViewBuilder
@@ -457,12 +845,21 @@ struct RecordingLibraryView: View {
             }
         }
 
-        MeetingSection(title: "Summary", icon: "text.alignleft") {
-            Text(insights.summary.isEmpty ? "OpenRec could not generate a summary for this call." : insights.summary)
-                .font(.system(size: 12))
-                .foregroundColor(insights.summary.isEmpty ? secondary : primary.opacity(0.82))
-                .lineSpacing(3)
-                .textSelection(.enabled)
+        MeetingSection(title: "AI Notes", icon: "sparkles") {
+            if !insights.aiNotes.isEmpty {
+                MarkdownNotesView(markdown: insights.aiNotes, textColor: primary, secondaryColor: secondary)
+            } else if !insights.summary.isEmpty {
+                // Meetings analyzed before AI Notes existed only carry a summary.
+                Text(insights.summary)
+                    .font(.system(size: 12))
+                    .foregroundColor(primary.opacity(0.82))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            } else {
+                Text("OpenRec could not generate notes for this call.")
+                    .font(.system(size: 12))
+                    .foregroundColor(secondary)
+            }
         }
 
         MeetingSection(title: "Next steps", icon: "arrow.up.right.circle.fill") {
@@ -544,6 +941,7 @@ struct RecordingLibraryView: View {
         searchText = ""
         remoteSearchResults = []
         searchError = nil
+        switchTab(to: .past)
         selectMeeting(meeting, forceReload: true)
         return true
     }
@@ -625,10 +1023,51 @@ struct RecordingLibraryView: View {
         }
     }
 
+    /// Deleting is permanent across every copy of the meeting, so spell out
+    /// exactly what will be removed before doing anything.
+    private func confirmAndDelete(_ meeting: MeetingRecord) {
+        var removals = ["its transcript and AI notes"]
+        if meeting.hasScreenRecording || meeting.hasAudioRecording { removals.append("the cloud recording") }
+        if meeting.localScreenPath != nil || meeting.localAudioPath != nil { removals.append("the local recording file") }
+
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(meeting.title)”?"
+        alert.informativeText = "This permanently deletes the meeting, including \(removals.joined(separator: ", ")). It cannot be undone."
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Delete Meeting")
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+
+        deletingMeetingID = meeting.id
+        Task {
+            defer { deletingMeetingID = nil }
+            do {
+                try await recorderManager.cloudStorage.deleteMeeting(meeting)
+                if selectedID == meeting.id {
+                    player?.pause()
+                    player = nil
+                    playerKind = nil
+                    selectedID = nil
+                    detail = nil
+                    selectInitialMeeting()
+                }
+            } catch {
+                let failure = NSAlert()
+                failure.messageText = "Could not delete “\(meeting.title)”"
+                failure.informativeText = error.localizedDescription
+                failure.alertStyle = .warning
+                failure.addButton(withTitle: "OK")
+                failure.runModal()
+            }
+        }
+    }
+
     private func copyMeeting(_ meeting: MeetingRecord) {
         var sections = [meeting.title]
         if !meeting.insights.participants.isEmpty { sections.append("Participants: " + meeting.insights.participants.joined(separator: ", ")) }
-        if !meeting.insights.summary.isEmpty { sections.append(meeting.insights.summary) }
+        if !meeting.insights.aiNotes.isEmpty { sections.append(meeting.insights.aiNotes) }
+        else if !meeting.insights.summary.isEmpty { sections.append(meeting.insights.summary) }
         if !meeting.insights.actionItems.isEmpty {
             sections.append("Next steps\n" + meeting.insights.actionItems.map { "• " + ($0.owner.isEmpty ? $0.task : "\($0.owner): \($0.task)") }.joined(separator: "\n"))
         }
@@ -651,6 +1090,147 @@ struct RecordingLibraryView: View {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
+private struct UpcomingDayRow: View {
+    let group: UpcomingDayGroup
+    let accent: Color
+    let adoptedEventID: String?
+    let onAdopt: (UpcomingCalendarEvent) -> Void
+
+    private var isToday: Bool {
+        Calendar.current.isDateInToday(group.day)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .top, spacing: 4) {
+                    Text(Self.dayNumberFormatter.string(from: group.day))
+                        .font(.system(size: 21, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
+                    if isToday {
+                        Circle().fill(accent).frame(width: 5, height: 5).padding(.top, 5)
+                    }
+                }
+                Text(Self.monthFormatter.string(from: group.day))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                Text(Self.weekdayFormatter.string(from: group.day))
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+            .frame(width: 56, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 9) {
+                if group.events.isEmpty {
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 3, height: 26)
+                        Text("No more events today")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(.white.opacity(0.38))
+                    }
+                    .padding(.vertical, 2)
+                } else {
+                    ForEach(group.events) { event in
+                        UpcomingEventRow(
+                            event: event,
+                            accent: accent,
+                            adopted: adoptedEventID == event.id,
+                            onAdopt: { onAdopt(event) }
+                        )
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 12)
+    }
+
+    private static let dayNumberFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("d")
+        return formatter
+    }()
+
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMM")
+        return formatter
+    }()
+
+    private static let weekdayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEE")
+        return formatter
+    }()
+}
+
+private struct UpcomingEventRow: View {
+    let event: UpcomingCalendarEvent
+    let accent: Color
+    let adopted: Bool
+    let onAdopt: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: onAdopt) {
+            HStack(alignment: .top, spacing: 8) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(isOngoing ? accent : accent.opacity(0.55))
+                    .frame(width: 3)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(event.title)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundColor(.white.opacity(0.88))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    HStack(spacing: 6) {
+                        Text("\(Self.timeFormatter.string(from: event.start)) – \(Self.timeFormatter.string(from: event.end))")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.white.opacity(0.42))
+                        if adopted {
+                            Label("Set as call name", systemImage: "checkmark")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.green.opacity(0.85))
+                                .transition(.opacity)
+                        } else if hovering {
+                            Text("Use as call name")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.white.opacity(0.45))
+                                .transition(.opacity)
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(6)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.white.opacity(hovering ? 0.07 : 0))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { value in
+            withAnimation(.easeOut(duration: 0.12)) { hovering = value }
+        }
+        .help("Pre-fill the recorder's call name with this meeting")
+    }
+
+    private var isOngoing: Bool {
+        let now = Date()
+        return event.start <= now && event.end >= now
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
         return formatter
     }()
 }
@@ -841,5 +1421,115 @@ private struct FlowLayout: Layout {
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
+    }
+}
+
+/// Renders Granola-style markdown meeting notes: section headers, bullet and
+/// numbered lists, and inline emphasis. Intentionally small — it covers the
+/// markdown the insights prompt asks for rather than the full spec.
+struct MarkdownNotesView: View {
+    let markdown: String
+    var textColor: Color = .white
+    var secondaryColor: Color = Color.white.opacity(0.55)
+
+    private enum Block: Identifiable {
+        case header(level: Int, text: String)
+        case bullet(indent: Int, text: String)
+        case numbered(label: String, text: String)
+        case paragraph(text: String)
+        case divider
+
+        var id: UUID { UUID() }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            let blocks = Self.parse(markdown)
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                blockView(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: Block) -> some View {
+        switch block {
+        case .header(let level, let text):
+            inlineText(text)
+                .font(.system(size: level <= 1 ? 14 : (level == 2 ? 13 : 12), weight: .semibold))
+                .foregroundColor(textColor.opacity(0.95))
+                .padding(.top, 7)
+        case .bullet(let indent, let text):
+            HStack(alignment: .top, spacing: 7) {
+                Text("•")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(secondaryColor)
+                inlineText(text)
+                    .font(.system(size: 12))
+                    .foregroundColor(textColor.opacity(0.82))
+                    .lineSpacing(3)
+            }
+            .padding(.leading, CGFloat(indent) * 14)
+        case .numbered(let label, let text):
+            HStack(alignment: .top, spacing: 7) {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(secondaryColor)
+                inlineText(text)
+                    .font(.system(size: 12))
+                    .foregroundColor(textColor.opacity(0.82))
+                    .lineSpacing(3)
+            }
+        case .paragraph(let text):
+            inlineText(text)
+                .font(.system(size: 12))
+                .foregroundColor(textColor.opacity(0.82))
+                .lineSpacing(3)
+        case .divider:
+            Color.white.opacity(0.1)
+                .frame(height: 1)
+                .padding(.vertical, 4)
+        }
+    }
+
+    private func inlineText(_ text: String) -> Text {
+        if let attributed = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return Text(attributed)
+        }
+        return Text(text)
+    }
+
+    private static func parse(_ markdown: String) -> [Block] {
+        var blocks: [Block] = []
+        for rawLine in markdown.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            if line == "---" || line == "***" {
+                blocks.append(.divider)
+                continue
+            }
+            if let headerMatch = line.range(of: #"^#{1,4} "#, options: .regularExpression) {
+                let level = line.prefix(upTo: headerMatch.upperBound).filter { $0 == "#" }.count
+                blocks.append(.header(level: level, text: String(line[headerMatch.upperBound...])))
+                continue
+            }
+            if let bulletMatch = rawLine.range(of: #"^\s*[-*•] "#, options: .regularExpression) {
+                let leadingSpaces = rawLine.prefix { $0 == " " || $0 == "\t" }.count
+                blocks.append(.bullet(indent: min(leadingSpaces / 2, 3), text: String(rawLine[bulletMatch.upperBound...])))
+                continue
+            }
+            if let numberMatch = line.range(of: #"^\d{1,2}[.)] "#, options: .regularExpression) {
+                let label = line.prefix(upTo: numberMatch.upperBound).trimmingCharacters(in: .whitespaces)
+                blocks.append(.numbered(label: label, text: String(line[numberMatch.upperBound...])))
+                continue
+            }
+            blocks.append(.paragraph(text: line))
+        }
+        return blocks
     }
 }

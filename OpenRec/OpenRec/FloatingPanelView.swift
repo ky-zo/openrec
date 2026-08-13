@@ -5,7 +5,7 @@ struct FloatingPanelView: View {
     @ObservedObject var recorderManager: RecorderManager
     @ObservedObject var windowState: WindowState
     let onOpenSettings: () -> Void
-    let onOpenLibrary: () -> Void
+    let onOpenLibrary: (_ focusLastSaved: Bool) -> Void
 
     private var showRightPanel: Bool {
         guard !windowState.isCollapsed else { return false }
@@ -28,7 +28,11 @@ struct FloatingPanelView: View {
                     if windowState.isCollapsed {
                         CompactControlsView(recorderManager: recorderManager, onOpenLibrary: onOpenLibrary)
                     } else if recorderManager.isRecording {
+                        // Center the controls row in the space below the header so
+                        // the panel's top and bottom breathing room stay balanced.
                         RecordingControlsView(recorderManager: recorderManager)
+                            .frame(maxHeight: .infinity)
+                            .layoutPriority(1)
                     } else {
                         PopoverContentView(recorderManager: recorderManager, onOpenLibrary: onOpenLibrary)
                     }
@@ -126,9 +130,10 @@ private struct HeaderView: View {
 private struct RecordingControlsView: View {
     @ObservedObject var recorderManager: RecorderManager
     @State private var hoveringStop = false
+    @State private var hoveringDiscard = false
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button { recorderManager.stopRecording() } label: {
                 ZStack {
                     Circle()
@@ -144,15 +149,20 @@ private struct RecordingControlsView: View {
             .buttonStyle(.plain)
             .onHover { hoveringStop = $0 }
 
+            // The timer is the only compressible view in this row; without
+            // fixedSize the window's 240pt width squeezes it into wrapped lines.
             Text(formatDuration(recorderManager.duration))
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(.white)
+                .lineLimit(1)
+                .fixedSize()
+                .layoutPriority(1)
 
             AudioWaveformView(
                 micLevel: recorderManager.micLevel,
                 systemLevel: recorderManager.systemLevel
             )
-            .frame(width: 54, height: 14)
+            .frame(width: 44, height: 14)
 
             Image(systemName: recorderManager.cloudUploadHasFailed ? "icloud.slash.fill" : "icloud.and.arrow.up.fill")
                 .font(.system(size: 10, weight: .semibold))
@@ -160,6 +170,15 @@ private struct RecordingControlsView: View {
                 .help(recorderManager.cloudUploadStatusText)
 
             Spacer(minLength: 2)
+
+            Button(action: confirmAndDiscardRecording) {
+                Image(systemName: "trash")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(hoveringDiscard ? .red : .white.opacity(0.52))
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveringDiscard = $0 }
+            .help("Discard this recording")
 
             Menu {
                 Toggle("Keep screen recording", isOn: preferenceBinding(recorderManager, \.keepScreenRecording))
@@ -190,11 +209,36 @@ private struct RecordingControlsView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
     }
+
+    /// Discarding a live call is destructive and unrecoverable, so it asks
+    /// twice: a warning first, then an explicit "can't be undone" critical
+    /// alert. Recording continues until the second confirmation.
+    private func confirmAndDiscardRecording() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let first = NSAlert()
+        first.messageText = "Discard this recording?"
+        first.informativeText = "The recording, its cloud upload, and the live notes for this call will be deleted."
+        first.alertStyle = .warning
+        first.addButton(withTitle: "Keep Recording")
+        first.addButton(withTitle: "Discard…")
+        guard first.runModal() == .alertSecondButtonReturn else { return }
+
+        let second = NSAlert()
+        second.messageText = "Really discard everything from this call?"
+        second.informativeText = "This permanently deletes everything captured so far. It cannot be undone."
+        second.alertStyle = .critical
+        second.addButton(withTitle: "Keep Recording")
+        second.addButton(withTitle: "Discard Recording")
+        guard second.runModal() == .alertSecondButtonReturn else { return }
+
+        recorderManager.cancelRecording()
+    }
 }
 
 private struct CompactControlsView: View {
     @ObservedObject var recorderManager: RecorderManager
-    let onOpenLibrary: () -> Void
+    let onOpenLibrary: (_ focusLastSaved: Bool) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -205,7 +249,7 @@ private struct CompactControlsView: View {
                 Button {
                     if case .failed = recorderManager.savePhase {
                         if recorderManager.canRetryLastSave { recorderManager.retryLastSave() }
-                        else { onOpenLibrary() }
+                        else { onOpenLibrary(true) }
                     } else if recorderManager.isRecording {
                         recorderManager.stopRecording()
                     } else {
@@ -267,6 +311,7 @@ private struct MeetingMemoryView: View {
     private var hasInsightMemory: Bool {
         let insights = recorderManager.transcriptionManager.insights
         return !insights.summary.isEmpty
+            || !insights.aiNotes.isEmpty
             || !insights.participants.isEmpty
             || !insights.actionItems.isEmpty
             || !insights.decisions.isEmpty
@@ -318,13 +363,21 @@ private struct MeetingMemoryView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         let insights = recorderManager.transcriptionManager.insights
-                        if !insights.summary.isEmpty {
+                        if !insights.summary.isEmpty || !insights.aiNotes.isEmpty {
                             VStack(alignment: .leading, spacing: 7) {
                                 Text(insights.title)
                                     .font(.system(size: 13, weight: .semibold))
-                                Text(insights.summary)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.72))
+                                if !insights.aiNotes.isEmpty {
+                                    MarkdownNotesView(
+                                        markdown: insights.aiNotes,
+                                        textColor: .white,
+                                        secondaryColor: .white.opacity(0.5)
+                                    )
+                                } else {
+                                    Text(insights.summary)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.72))
+                                }
                             }
                         }
 
@@ -413,7 +466,8 @@ private struct MeetingMemoryView: View {
     private func copyMeetingMemory() {
         let insights = recorderManager.transcriptionManager.insights
         var sections: [String] = []
-        if !insights.summary.isEmpty { sections.append("\(insights.title)\n\n\(insights.summary)") }
+        if !insights.aiNotes.isEmpty { sections.append("\(insights.title)\n\n\(insights.aiNotes)") }
+        else if !insights.summary.isEmpty { sections.append("\(insights.title)\n\n\(insights.summary)") }
         if !insights.participants.isEmpty { sections.append("Participants\n\(insights.participants.joined(separator: ", "))") }
         if !insights.actionItems.isEmpty {
             sections.append("Next steps\n" + insights.actionItems.map { "• " + ($0.owner.isEmpty ? $0.task : "\($0.owner): \($0.task)") }.joined(separator: "\n"))
