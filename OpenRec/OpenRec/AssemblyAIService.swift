@@ -363,8 +363,7 @@ struct AssemblyAIService {
             let nested = object?["error"] as? [String: Any]
             let message = (object?["error"] as? String)
                 ?? (nested?["message"] as? String)
-                ?? String(data: data, encoding: .utf8)
-                ?? "Unknown AssemblyAI error"
+                ?? CloudStorageManager.sanitizedErrorBody(data, status: http.statusCode)
             throw OpenRecError.requestFailed(status: http.statusCode, message: message)
         }
     }

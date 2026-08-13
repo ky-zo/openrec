@@ -40,7 +40,7 @@ struct WebhookDeliveryService {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw OpenRecError.invalidResponse("The webhook returned no HTTP response.") }
         guard (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown webhook error"
+            let message = CloudStorageManager.sanitizedErrorBody(data, status: http.statusCode)
             throw OpenRecError.requestFailed(status: http.statusCode, message: message)
         }
     }
@@ -70,7 +70,7 @@ struct WebhookDeliveryService {
         let (data, response) = try await URLSession.shared.upload(for: request, fromFile: bodyURL)
         guard let http = response as? HTTPURLResponse else { throw OpenRecError.invalidResponse("The webhook returned no HTTP response.") }
         guard (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown webhook error"
+            let message = CloudStorageManager.sanitizedErrorBody(data, status: http.statusCode)
             throw OpenRecError.requestFailed(status: http.statusCode, message: message)
         }
     }
@@ -108,7 +108,7 @@ struct WebhookDeliveryService {
             throw OpenRecError.invalidResponse("The webhook returned no HTTP response.")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "Unknown webhook error"
+            let message = CloudStorageManager.sanitizedErrorBody(data, status: http.statusCode)
             throw OpenRecError.requestFailed(status: http.statusCode, message: message)
         }
     }

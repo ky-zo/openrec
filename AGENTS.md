@@ -76,7 +76,20 @@ It exists because these exact mistakes have already been made once.
     appears after the ~25s archive step), or run it interactively.
   - `--output <dir>` builds the signed/notarized artifact locally **without
     uploading** — use it to verify a build without publishing.
+- **After every Amore release, also publish a GitHub release** for the same
+  tag with the DMG attached under the asset name **exactly `OpenRec.dmg`**
+  (`gh release create vX.Y.Z path/to/OpenRec.dmg …` — note that gh's
+  `file#Label` syntax sets a display label, NOT the asset name; the file on
+  disk must literally be named `OpenRec.dmg`). Two things depend on this:
+  the landing page's download button
+  (`github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg`) and the
+  legacy in-app updater on pre-0.3.1 installs.
 - The legacy Sparkle path (`release.sh` → tag → `build-app.sh` →
   `appcast.xml`) still exists; don't mix the two in one release. If a release
   goes out via Amore, the tag/commit should still be created so dist matches a
   commit.
+- **Error bodies:** never store or render a raw HTTP response body as an error
+  message — pass it through `CloudStorageManager.sanitizedErrorBody` (HTML
+  pages become a one-liner, everything is capped) and keep `lineLimit` on
+  error labels. A webhook that answers with an HTML page once flooded the
+  whole Meetings sidebar with SVG source.

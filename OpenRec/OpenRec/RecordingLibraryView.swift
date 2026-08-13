@@ -228,7 +228,7 @@ struct RecordingLibraryView: View {
                     Label(searchError, systemImage: "magnifyingglass")
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(Color.orange.opacity(0.88))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(3)
                         .padding(.horizontal, 14)
                         .padding(.bottom, 8)
                 }
@@ -236,7 +236,7 @@ struct RecordingLibraryView: View {
                     Label(error, systemImage: "icloud.slash")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(Color.orange.opacity(0.9))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(4)
                         .padding(.horizontal, 14)
                         .padding(.bottom, 10)
                 }

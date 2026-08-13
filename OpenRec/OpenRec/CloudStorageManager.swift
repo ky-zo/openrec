@@ -1630,9 +1630,25 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
         guard let http = response as? HTTPURLResponse else { throw OpenRecError.invalidResponse("No HTTP response was received.") }
         guard (200..<300).contains(http.statusCode) else {
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let message = json?["error"] as? String ?? String(data: data, encoding: .utf8) ?? "Unknown error"
+            let message = json?["error"] as? String ?? Self.sanitizedErrorBody(data, status: http.statusCode)
             throw OpenRecError.requestFailed(status: http.statusCode, message: message)
         }
+    }
+
+    /// Non-JSON failure bodies are often entire HTML error pages (gateway
+    /// errors, maintenance pages). Never surface those verbatim — they flood
+    /// every error label in the UI.
+    nonisolated static func sanitizedErrorBody(_ data: Data, status: Int) -> String {
+        guard let raw = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty else { return "Unknown error (HTTP \(status))" }
+        if raw.hasPrefix("<") || raw.lowercased().contains("<html") {
+            return "The server returned an unexpected web page (HTTP \(status)). Try again in a moment."
+        }
+        let flattened = raw
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        return flattened.count > 240 ? String(flattened.prefix(240)) + "…" : flattened
     }
 
     private func contentType(for url: URL) -> String {
