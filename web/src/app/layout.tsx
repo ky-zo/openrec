@@ -1,8 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Nunito_Sans } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-
-const nunitoSans = Nunito_Sans({variable:'--font-sans'});
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,15 +12,40 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const title = "OpenRec — Record your call meetings for free";
+const description =
+  "Open source macOS call recorder. Captures screen, system audio, and mic without adding a bot to the meeting, then gives you a transcript, summary, decisions, and next steps.";
+
 export const metadata: Metadata = {
-  title: "OpenRec - Record Your Calls",
-  description: "Open source free software to record your call meetings",
+  title,
+  description,
+  applicationName: "OpenRec",
+  keywords: [
+    "call recorder",
+    "meeting recorder",
+    "macOS",
+    "open source",
+    "transcription",
+    "meeting notes",
+  ],
+  openGraph: {
+    title,
+    description,
+    type: "website",
+    siteName: "OpenRec",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title,
+    description,
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#0a0a0a",
 };
 
 export default function RootLayout({
@@ -31,7 +54,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={nunitoSans.variable}>
+    <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
