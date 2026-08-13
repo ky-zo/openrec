@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>app.openrec.mac.dev</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>openrec-dev</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OpenRec needs microphone access to record audio with your screen recordings.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>OpenRec needs screen recording permission to capture your screen and system audio.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+</dict>
+</plist>

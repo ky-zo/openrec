@@ -15,8 +15,16 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreMedia"),
                 .linkedFramework("AppKit"),
-                .linkedFramework("SwiftUI")
+                .linkedFramework("SwiftUI"),
+                .linkedFramework("AuthenticationServices"),
+                .linkedFramework("Security"),
+                .linkedFramework("CryptoKit")
             ]
+        ),
+        .testTarget(
+            name: "OpenRecAppTests",
+            dependencies: ["OpenRecApp"],
+            path: "Tests/OpenRecAppTests"
         )
     ]
 )

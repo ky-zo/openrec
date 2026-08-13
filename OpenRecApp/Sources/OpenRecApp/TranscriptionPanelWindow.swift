@@ -33,6 +33,7 @@ final class TranscriptionPanelWindow {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.appearance = NSAppearance(named: .darkAqua)
+        panel.sharingType = .readOnly
 
         let hostingView = NSHostingView(
             rootView: TranscriptionInlineView(

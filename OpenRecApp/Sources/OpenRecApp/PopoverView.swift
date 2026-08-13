@@ -3,9 +3,9 @@ import AppKit
 
 struct PopoverContentView: View {
     @ObservedObject var recorderManager: RecorderManager
+    let onOpenLibrary: () -> Void
     @State private var isHovering = false
     @State private var isHoveringFolder = false
-    @State private var isHoveringLocation = false
     @State private var isHoveringTranscription = false
     @FocusState private var isClientNameFocused: Bool
     private let primaryText = Color.white.opacity(0.9)
@@ -42,7 +42,7 @@ struct PopoverContentView: View {
                         ASCIISpinner(size: 22)
                             .frame(width: 48, height: 48)
 
-                        Text(recorderManager.isProcessing ? "Saving..." : "Starting...")
+                        Text(recorderManager.isProcessing ? recorderManager.savePhase.label : "Starting…")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.white.opacity(0.7))
                     }
@@ -98,21 +98,54 @@ struct PopoverContentView: View {
                     } else if recorderManager.isProcessing || recorderManager.isStarting {
                         Text(" ")
                             .font(.system(size: 12, weight: .medium))
+                    } else if case .complete = recorderManager.savePhase {
+                        Label("Saved to Meetings", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.green.opacity(0.9))
+                    } else if case .completeWithWarning(let warning) = recorderManager.savePhase {
+                        VStack(spacing: 3) {
+                            Label("Saved with a warning", systemImage: "exclamationmark.circle.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(warning)
+                                .font(.system(size: 9, weight: .medium))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(3)
+                        }
+                        .foregroundColor(.orange.opacity(0.9))
                     } else if let error = recorderManager.lastErrorMessage {
                         Text(error)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.red.opacity(0.9))
                             .multilineTextAlignment(.center)
-                            .lineLimit(2)
+                            .lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text("Start Recording")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.white.opacity(0.5))
                     }
                 }
-                .frame(height: 26)
+                .frame(minHeight: 26)
+
+                if case .failed = recorderManager.savePhase, recorderManager.canRetryLastSave {
+                    HStack(spacing: 14) {
+                        Button("Retry") { recorderManager.retryLastSave() }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.72))
+                } else if recorderManager.savePhase.isSaved, recorderManager.lastSavedMeetingID != nil {
+                    Button("View meeting") { onOpenLibrary() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.78))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
             }
-            .frame(height: 112)
+            .frame(height: recorderManager.lastErrorMessage == nil ? 112 : 142)
 
             Spacer(minLength: 0)
 
@@ -121,7 +154,7 @@ struct PopoverContentView: View {
                 if !recorderManager.isRecording {
                     VStack(spacing: 4) {
                         HStack(spacing: 6) {
-                            Image(systemName: "folder")
+                            Image(systemName: "text.cursor")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(secondaryText)
                                 .frame(width: 14, alignment: .center)
@@ -129,7 +162,7 @@ struct PopoverContentView: View {
                             TextField(
                                 "",
                                 text: $recorderManager.clientNameInput,
-                                prompt: Text("client name").foregroundColor(placeholderText)
+                                prompt: Text("call title or client").foregroundColor(placeholderText)
                             )
                                 .textFieldStyle(.plain)
                                 .font(labelFont)
@@ -212,12 +245,12 @@ struct PopoverContentView: View {
                     )
 
                     Button(action: {
-                        recorderManager.openRecordingsFolder()
+                        onOpenLibrary()
                     }) {
                         HStack(spacing: 6) {
-                            Image(systemName: "folder")
+                            Image(systemName: "rectangle.stack")
                                 .font(.system(size: 11))
-                            Text("Open Recordings")
+                            Text("Meetings")
                                 .font(labelFont)
                         }
                         .foregroundColor(primaryText.opacity(isHoveringFolder ? 1.0 : 0.8))
@@ -231,32 +264,6 @@ struct PopoverContentView: View {
                         isHoveringFolder = hovering
                     }
 
-                    Button(action: {
-                        recorderManager.chooseRecordingsFolder()
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "folder.badge.gearshape")
-                                .font(.system(size: 11))
-                            Text("Change Location...")
-                                .font(labelFont)
-                        }
-                        .foregroundColor(primaryText.opacity(isHoveringLocation ? 1.0 : 0.8))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(Color.white.opacity(isHoveringLocation ? 0.15 : 0.08))
-                        .cornerRadius(5)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        isHoveringLocation = hovering
-                    }
-
-                    // Path display
-                    Text(recorderManager.recordingsPathDisplay)
-                        .font(.system(size: 9))
-                        .foregroundColor(hintText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
                 }
             }
             .padding(.horizontal, 14)

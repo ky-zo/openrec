@@ -4,22 +4,18 @@ import AVFoundation
 
 /// Energy snapshot for a 100ms audio chunk, tracking which source is dominant.
 struct AudioEnergySnapshot {
-    let timestamp: Double // seconds since mixer start
+    let timestamp: Double
     let micRMS: Float
     let systemRMS: Float
 
     var dominantSource: AudioSource {
         let noiseFloor: Float = 0.008
-        // When mic is active but system is silent → definitely "Me" speaking
         if micRMS > noiseFloor && systemRMS < noiseFloor {
             return .mic
         }
-        // When system audio is active, mic also picks it up via speaker bleed.
-        // Only attribute to "Me" if mic is overwhelmingly louder (3x+).
         if systemRMS > noiseFloor {
             return micRMS > systemRMS * 3.0 ? .mic : .system
         }
-        // Both quiet → neutral
         return .system
     }
 }
@@ -29,166 +25,426 @@ enum AudioSource {
     case system
 }
 
-/// Mixes system + mic Float32 PCM into mono Int16 PCM chunks for STT.
-class AudioMixer {
-    private let lock = NSLock()
-    private var systemBuffer: [Float] = []
-    private var micBuffer: [Float] = []
+/// A timestamped, mono Float32 PCM chunk. The timestamp remains in the capture
+/// clock so a recorder can keep it synchronized with ScreenCaptureKit video.
+struct TimestampedPCMChunk: @unchecked Sendable {
+    static let sampleRate: Double = 48_000
+
+    let data: Data
+    let presentationTime: CMTime
+    let frameCount: Int
+}
+
+/// Mixes system and microphone PCM without doing work on either capture callback.
+///
+/// `onChunkReady` retains the existing 16 kHz mono Int16 stream used by realtime
+/// transcription. `onHighQualityChunkReady` emits the same mix as timestamped
+/// 48 kHz mono Float32 PCM for the media encoders.
+final class AudioMixer {
+    private struct TimedSamples {
+        let startFrame: Int64
+        let samples: [Float]
+
+        var endFrame: Int64 { startFrame + Int64(samples.count) }
+    }
+
+    private enum Source {
+        case system
+        case mic
+    }
+
+    private let processingQueue = DispatchQueue(label: "audiomixer.processing", qos: .userInitiated)
+    private let callbackQueue = DispatchQueue(label: "audiomixer.callbacks", qos: .userInitiated)
+    private let timelineLock = NSLock()
+
+    private let outputSampleRate = TimestampedPCMChunk.sampleRate
+    private let transcriptionSampleRate: Double = 16_000
+    private let framesPerChunk = 4_800 // 100 ms at 48 kHz
+    private let holdbackFrames = 4_800 // let the other input arrive before mixing
+
     private var timer: DispatchSourceTimer?
-    private let timerQueue = DispatchQueue(label: "audiomixer.timer")
-    private let targetSampleRate: Double = 16000
-    private var startTime: Date?
+    private var running = false
+    private var finishing = false
+    private var timelineOrigin: CMTime?
+    private var outputFrame: Int64 = 0
+    private var latestInputFrame: Int64 = 0
+    private var systemChunks: [TimedSamples] = []
+    private var micChunks: [TimedSamples] = []
     private var _energyTimeline: [AudioEnergySnapshot] = []
 
     var onChunkReady: ((Data) -> Void)?
+    var onHighQualityChunkReady: ((TimestampedPCMChunk) -> Void)?
 
     /// Thread-safe copy of the energy timeline recorded during mixing.
     var energyTimeline: [AudioEnergySnapshot] {
-        lock.lock()
+        timelineLock.lock()
         let copy = _energyTimeline
-        lock.unlock()
+        timelineLock.unlock()
         return copy
     }
 
+    /// Enqueues the buffer and returns immediately to ScreenCaptureKit.
     func appendSystemAudio(_ sampleBuffer: CMSampleBuffer) {
-        guard let samples = extractFloat32Samples(from: sampleBuffer) else { return }
-        let mono = stereoToMono(samples)
-        let resampled = resampleIfNeeded(mono, from: 48000, to: targetSampleRate)
-        lock.lock()
-        systemBuffer.append(contentsOf: resampled)
-        lock.unlock()
+        processingQueue.async { [weak self, sampleBuffer] in
+            self?.ingest(sampleBuffer, source: .system)
+        }
     }
 
+    /// Enqueues the buffer and returns immediately to AVCaptureSession.
     func appendMicAudio(_ sampleBuffer: CMSampleBuffer) {
-        let sourceSampleRate = getSampleRate(from: sampleBuffer) ?? 48000
-        guard let samples = extractFloat32Samples(from: sampleBuffer) else { return }
-        let channelCount = getChannelCount(from: sampleBuffer)
-        let mono = channelCount > 1 ? stereoToMono(samples) : samples
-        let resampled = resampleIfNeeded(mono, from: sourceSampleRate, to: targetSampleRate)
-        lock.lock()
-        micBuffer.append(contentsOf: resampled)
-        lock.unlock()
+        processingQueue.async { [weak self, sampleBuffer] in
+            self?.ingest(sampleBuffer, source: .mic)
+        }
     }
 
     func start() {
-        lock.lock()
-        startTime = Date()
-        _energyTimeline.removeAll()
-        lock.unlock()
+        processingQueue.sync {
+            timer?.cancel()
+            timer = nil
+            running = true
+            finishing = false
+            timelineOrigin = nil
+            outputFrame = 0
+            latestInputFrame = 0
+            systemChunks.removeAll(keepingCapacity: true)
+            micChunks.removeAll(keepingCapacity: true)
+            timelineLock.lock()
+            _energyTimeline.removeAll(keepingCapacity: true)
+            timelineLock.unlock()
 
-        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
-        timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
-        timer.setEventHandler { [weak self] in
-            self?.drainAndMix()
+            let timer = DispatchSource.makeTimerSource(queue: processingQueue)
+            timer.schedule(deadline: .now() + 0.1, repeating: 0.1, leeway: .milliseconds(10))
+            timer.setEventHandler { [weak self] in
+                self?.drainReadyChunks(flush: false)
+            }
+            timer.resume()
+            self.timer = timer
         }
-        timer.resume()
-        self.timer = timer
     }
 
+    /// Stops STT-style mixing. Pending audio is intentionally discarded, which
+    /// preserves the existing immediate-stop behavior used by transcription.
     func stop() {
-        timer?.cancel()
-        timer = nil
-        lock.lock()
-        systemBuffer.removeAll()
-        micBuffer.removeAll()
-        lock.unlock()
+        processingQueue.async { [weak self] in
+            guard let self else { return }
+            self.timer?.cancel()
+            self.timer = nil
+            self.running = false
+            self.finishing = false
+            self.systemChunks.removeAll(keepingCapacity: false)
+            self.micChunks.removeAll(keepingCapacity: false)
+        }
     }
 
-    private func drainAndMix() {
-        lock.lock()
-        let sys = systemBuffer
-        let mic = micBuffer
-        let elapsed = startTime.map { Date().timeIntervalSince($0) } ?? 0
-        systemBuffer.removeAll(keepingCapacity: true)
-        micBuffer.removeAll(keepingCapacity: true)
-        lock.unlock()
+    /// Flushes every queued capture frame, then calls completion only after all
+    /// PCM callbacks already emitted by this mixer have returned.
+    func finish(completion: @escaping () -> Void) {
+        processingQueue.async { [weak self] in
+            guard let self else {
+                completion()
+                return
+            }
+            guard self.running, !self.finishing else {
+                self.callbackQueue.async(execute: completion)
+                return
+            }
+            self.finishing = true
+            self.timer?.cancel()
+            self.timer = nil
+            self.drainReadyChunks(flush: true)
+            self.running = false
+            self.systemChunks.removeAll(keepingCapacity: false)
+            self.micChunks.removeAll(keepingCapacity: false)
+            self.callbackQueue.async(execute: completion)
+        }
+    }
 
-        let count = max(sys.count, mic.count)
-        guard count > 0 else { return }
+    private func ingest(_ sampleBuffer: CMSampleBuffer, source: Source) {
+        guard running, !finishing,
+              let extracted = extractMonoPCM(from: sampleBuffer),
+              !extracted.samples.isEmpty else { return }
 
-        // Compute RMS energy for each source
+        let resampled = resampleIfNeeded(
+            extracted.samples,
+            from: extracted.sampleRate,
+            to: outputSampleRate
+        )
+        guard !resampled.isEmpty else { return }
+
+        let timestamp = extracted.presentationTime.isNumeric
+            ? extracted.presentationTime
+            : CMClockGetTime(CMClockGetHostTimeClock())
+        if timelineOrigin == nil {
+            timelineOrigin = timestamp
+        }
+        guard let timelineOrigin else { return }
+
+        let delta = CMTimeGetSeconds(CMTimeSubtract(timestamp, timelineOrigin))
+        var startFrame = delta.isFinite
+            ? Int64((delta * outputSampleRate).rounded())
+            : latestInputFrame
+
+        // A capture source can occasionally expose a different clock epoch. In
+        // that case align its first packet with the live cursor, not hours away.
+        if abs(startFrame - outputFrame) > Int64(outputSampleRate * 10) {
+            startFrame = max(outputFrame, latestInputFrame)
+        }
+
+        var samples = resampled
+        if startFrame < outputFrame {
+            let consumed = min(samples.count, Int(outputFrame - startFrame))
+            samples.removeFirst(consumed)
+            startFrame += Int64(consumed)
+        }
+        guard !samples.isEmpty else { return }
+
+        let chunk = TimedSamples(startFrame: startFrame, samples: samples)
+        latestInputFrame = max(latestInputFrame, chunk.endFrame)
+        switch source {
+        case .system:
+            insert(chunk, into: &systemChunks)
+        case .mic:
+            insert(chunk, into: &micChunks)
+        }
+    }
+
+    private func insert(_ chunk: TimedSamples, into chunks: inout [TimedSamples]) {
+        if chunks.last?.startFrame ?? Int64.min <= chunk.startFrame {
+            chunks.append(chunk)
+        } else {
+            let index = chunks.firstIndex { $0.startFrame > chunk.startFrame } ?? chunks.endIndex
+            chunks.insert(chunk, at: index)
+        }
+    }
+
+    private func drainReadyChunks(flush: Bool) {
+        guard running, let origin = timelineOrigin else { return }
+
+        let normalLimit = latestInputFrame - Int64(holdbackFrames)
+        let limit = flush ? latestInputFrame : normalLimit
+        while outputFrame < limit {
+            let remaining = limit - outputFrame
+            let frameCount = flush
+                ? min(framesPerChunk, Int(remaining))
+                : framesPerChunk
+            guard frameCount > 0 else { break }
+            emitChunk(origin: origin, startFrame: outputFrame, frameCount: frameCount)
+            outputFrame += Int64(frameCount)
+            pruneConsumedChunks()
+        }
+    }
+
+    private func emitChunk(origin: CMTime, startFrame: Int64, frameCount: Int) {
+        let system = render(chunks: systemChunks, startFrame: startFrame, frameCount: frameCount)
+        let mic = render(chunks: micChunks, startFrame: startFrame, frameCount: frameCount)
         let micRMS = rms(mic)
-        let sysRMS = rms(sys)
+        let systemRMS = rms(system)
 
-        let snapshot = AudioEnergySnapshot(timestamp: elapsed, micRMS: micRMS, systemRMS: sysRMS)
-        lock.lock()
-        _energyTimeline.append(snapshot)
-        lock.unlock()
+        timelineLock.lock()
+        _energyTimeline.append(
+            AudioEnergySnapshot(
+                timestamp: Double(startFrame) / outputSampleRate,
+                micRMS: micRMS,
+                systemRMS: systemRMS
+            )
+        )
+        timelineLock.unlock()
 
-        var mixed = [Float](repeating: 0, count: count)
-        for i in 0..<count {
-            let s = i < sys.count ? sys[i] : 0
-            let m = i < mic.count ? mic[i] : 0
-            mixed[i] = max(-1.0, min(1.0, s + m))
+        var mixed = [Float](repeating: 0, count: frameCount)
+        for index in mixed.indices {
+            mixed[index] = max(-1, min(1, system[index] + mic[index]))
         }
 
-        // Convert to Int16 PCM
-        var int16Data = Data(capacity: count * 2)
-        for sample in mixed {
-            var value = Int16(sample * 32767)
-            int16Data.append(Data(bytes: &value, count: 2))
-        }
+        let presentationTime = CMTimeAdd(
+            origin,
+            CMTime(value: startFrame, timescale: CMTimeScale(outputSampleRate))
+        )
+        let floatData = mixed.withUnsafeBytes { Data($0) }
+        let highQualityChunk = TimestampedPCMChunk(
+            data: floatData,
+            presentationTime: presentationTime,
+            frameCount: frameCount
+        )
 
-        onChunkReady?(int16Data)
+        let transcriptionSamples = resampleIfNeeded(
+            mixed,
+            from: outputSampleRate,
+            to: transcriptionSampleRate
+        )
+        let int16Samples = transcriptionSamples.map { sample -> Int16 in
+            let scaled = max(-1, min(1, sample)) * Float(Int16.max)
+            return Int16(scaled.rounded())
+        }
+        let int16Data = int16Samples.withUnsafeBytes { Data($0) }
+
+        callbackQueue.async { [weak self] in
+            guard let self else { return }
+            self.onHighQualityChunkReady?(highQualityChunk)
+            self.onChunkReady?(int16Data)
+        }
+    }
+
+    private func render(chunks: [TimedSamples], startFrame: Int64, frameCount: Int) -> [Float] {
+        let endFrame = startFrame + Int64(frameCount)
+        var rendered = [Float](repeating: 0, count: frameCount)
+
+        for chunk in chunks where chunk.endFrame > startFrame && chunk.startFrame < endFrame {
+            let overlapStart = max(startFrame, chunk.startFrame)
+            let overlapEnd = min(endFrame, chunk.endFrame)
+            guard overlapStart < overlapEnd else { continue }
+            let sourceOffset = Int(overlapStart - chunk.startFrame)
+            let destinationOffset = Int(overlapStart - startFrame)
+            let count = Int(overlapEnd - overlapStart)
+            for index in 0..<count {
+                rendered[destinationOffset + index] = chunk.samples[sourceOffset + index]
+            }
+        }
+        return rendered
+    }
+
+    private func pruneConsumedChunks() {
+        systemChunks.removeAll { $0.endFrame <= outputFrame }
+        micChunks.removeAll { $0.endFrame <= outputFrame }
     }
 
     private func rms(_ samples: [Float]) -> Float {
         guard !samples.isEmpty else { return 0 }
-        var sumSquares: Float = 0
-        for s in samples { sumSquares += s * s }
+        let sumSquares = samples.reduce(Float.zero) { $0 + ($1 * $1) }
         return sqrtf(sumSquares / Float(samples.count))
     }
 
-    private func extractFloat32Samples(from sampleBuffer: CMSampleBuffer) -> [Float]? {
-        guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return nil }
-
-        var length = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        let status = CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
-        guard status == noErr, let data = dataPointer, length > 0 else { return nil }
-
-        let floatCount = length / MemoryLayout<Float>.size
-        let floatPointer = UnsafeRawPointer(data).bindMemory(to: Float.self, capacity: floatCount)
-        return Array(UnsafeBufferPointer(start: floatPointer, count: floatCount))
-    }
-
-    private func stereoToMono(_ samples: [Float]) -> [Float] {
-        guard samples.count >= 2 else { return samples }
-        var mono = [Float](repeating: 0, count: samples.count / 2)
-        for i in 0..<mono.count {
-            mono[i] = (samples[i * 2] + samples[i * 2 + 1]) * 0.5
-        }
-        return mono
-    }
-
-    private func resampleIfNeeded(_ samples: [Float], from sourceSR: Double, to targetSR: Double) -> [Float] {
-        guard sourceSR != targetSR, sourceSR > 0 else { return samples }
-        let ratio = targetSR / sourceSR
-        let outputCount = Int(Double(samples.count) * ratio)
+    private func resampleIfNeeded(_ samples: [Float], from sourceRate: Double, to targetRate: Double) -> [Float] {
+        guard abs(sourceRate - targetRate) > 0.5, sourceRate > 0 else { return samples }
+        let ratio = targetRate / sourceRate
+        let outputCount = Int((Double(samples.count) * ratio).rounded())
         guard outputCount > 0 else { return [] }
+
         var output = [Float](repeating: 0, count: outputCount)
-        for i in 0..<outputCount {
-            let srcIndex = Double(i) / ratio
-            let idx = Int(srcIndex)
-            let frac = Float(srcIndex - Double(idx))
-            if idx + 1 < samples.count {
-                output[i] = samples[idx] * (1 - frac) + samples[idx + 1] * frac
-            } else if idx < samples.count {
-                output[i] = samples[idx]
+        for index in output.indices {
+            let sourceIndex = Double(index) / ratio
+            let lower = Int(sourceIndex)
+            let fraction = Float(sourceIndex - Double(lower))
+            if lower + 1 < samples.count {
+                output[index] = samples[lower] * (1 - fraction) + samples[lower + 1] * fraction
+            } else if lower < samples.count {
+                output[index] = samples[lower]
             }
         }
         return output
     }
 
-    private func getSampleRate(from sampleBuffer: CMSampleBuffer) -> Double? {
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else { return nil }
-        let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)
-        return asbd?.pointee.mSampleRate
+    private func extractMonoPCM(from sampleBuffer: CMSampleBuffer) -> (
+        samples: [Float],
+        sampleRate: Double,
+        presentationTime: CMTime
+    )? {
+        guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbdPointer = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
+            return nil
+        }
+        let asbd = asbdPointer.pointee
+        guard asbd.mFormatID == kAudioFormatLinearPCM,
+              asbd.mSampleRate > 0,
+              asbd.mChannelsPerFrame > 0 else { return nil }
+
+        var requiredSize = 0
+        var retainedBlockBuffer: CMBlockBuffer?
+        _ = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: &requiredSize,
+            bufferListOut: nil,
+            bufferListSize: 0,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
+            blockBufferOut: &retainedBlockBuffer
+        )
+        guard requiredSize >= MemoryLayout<AudioBufferList>.size else { return nil }
+
+        let rawList = UnsafeMutableRawPointer.allocate(
+            byteCount: requiredSize,
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { rawList.deallocate() }
+        let audioBufferList = rawList.bindMemory(to: AudioBufferList.self, capacity: 1)
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: audioBufferList,
+            bufferListSize: requiredSize,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
+            blockBufferOut: &retainedBlockBuffer
+        )
+        guard status == noErr else { return nil }
+
+        let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard frameCount > 0, !buffers.isEmpty else { return nil }
+
+        let isFloat = asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0
+        let isSignedInteger = asbd.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
+        let isNonInterleaved = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
+        let bytesPerSample = Int(asbd.mBitsPerChannel / 8)
+        guard bytesPerSample > 0, isFloat || isSignedInteger else { return nil }
+
+        var mono = [Float](repeating: 0, count: frameCount)
+        var contributingChannels = 0
+
+        for buffer in buffers {
+            guard let data = buffer.mData else { continue }
+            let channelsInBuffer = max(1, Int(buffer.mNumberChannels))
+            let interleavedChannels = isNonInterleaved ? 1 : channelsInBuffer
+            let availableSamples = Int(buffer.mDataByteSize) / bytesPerSample
+            let availableFrames = min(frameCount, availableSamples / interleavedChannels)
+            guard availableFrames > 0 else { continue }
+
+            for channel in 0..<channelsInBuffer {
+                for frame in 0..<availableFrames {
+                    let sampleIndex = isNonInterleaved
+                        ? frame
+                        : frame * channelsInBuffer + channel
+                    mono[frame] += readSample(
+                        from: data,
+                        index: sampleIndex,
+                        bitsPerChannel: Int(asbd.mBitsPerChannel),
+                        isFloat: isFloat
+                    )
+                }
+                contributingChannels += 1
+            }
+        }
+
+        guard contributingChannels > 0 else { return nil }
+        let divisor = Float(contributingChannels)
+        for index in mono.indices { mono[index] /= divisor }
+
+        return (
+            mono,
+            asbd.mSampleRate,
+            CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        )
     }
 
-    private func getChannelCount(from sampleBuffer: CMSampleBuffer) -> Int {
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else { return 1 }
-        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else { return 1 }
-        return Int(asbd.pointee.mChannelsPerFrame)
+    private func readSample(
+        from data: UnsafeMutableRawPointer,
+        index: Int,
+        bitsPerChannel: Int,
+        isFloat: Bool
+    ) -> Float {
+        if isFloat, bitsPerChannel == 32 {
+            return data.assumingMemoryBound(to: Float.self)[index]
+        }
+        if isFloat, bitsPerChannel == 64 {
+            return Float(data.assumingMemoryBound(to: Double.self)[index])
+        }
+        if bitsPerChannel == 16 {
+            return Float(data.assumingMemoryBound(to: Int16.self)[index]) / Float(Int16.max)
+        }
+        if bitsPerChannel == 32 {
+            return Float(data.assumingMemoryBound(to: Int32.self)[index]) / Float(Int32.max)
+        }
+        return 0
     }
 }

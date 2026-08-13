@@ -2,10 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>app.openrec.mac</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>openrec</string>
+			</array>
+		</dict>
+	</array>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://api.amore.computer/v1/apps/com.fluar.openrec/appcast.xml</string>
+	<string>https://api.amore.computer/v1/apps/app.openrec.mac/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>pBHfhwvtB0ADyCThUtvyrhkhRyitQpXVIMEEMyhuCJc=</string>
 </dict>

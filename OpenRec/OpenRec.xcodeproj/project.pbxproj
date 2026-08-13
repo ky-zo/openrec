@@ -1,0 +1,498 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		8ED86E522F2CAFCB00A96850 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 8ED86E512F2CAFCB00A96850 /* Sparkle */; };
+		A1000001243B0001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011243B0001 /* main.swift */; };
+		A1000002243B0001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012243B0001 /* AppDelegate.swift */; };
+		A1000003243B0001 /* RecorderManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000013243B0001 /* RecorderManager.swift */; };
+		A1000004243B0001 /* ScreenRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000014243B0001 /* ScreenRecorder.swift */; };
+		A1000005243B0001 /* FloatingPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000015243B0001 /* FloatingPanelView.swift */; };
+		A1000006243B0001 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000016243B0001 /* PopoverView.swift */; };
+		A1000007243B0001 /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000017243B0001 /* UpdateManager.swift */; };
+		A1000008243B0001 /* RecordingOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000018243B0001 /* RecordingOverlayWindow.swift */; };
+		A1000009243B0001 /* WindowState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000019243B0001 /* WindowState.swift */; };
+		A100000A243B0001 /* VisualEffectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100001A243B0001 /* VisualEffectView.swift */; };
+		A1000051243B0001 /* AudioMixer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000041243B0001 /* AudioMixer.swift */; };
+		A1000052243B0001 /* TranscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000042243B0001 /* TranscriptionManager.swift */; };
+		A1000053243B0001 /* TranscriptionPanelWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000043243B0001 /* TranscriptionPanelWindow.swift */; };
+		A1000054243B0001 /* TranscriptionPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000044243B0001 /* TranscriptionPanelView.swift */; };
+		A1000060243B0001 /* CallDetectionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000070243B0001 /* CallDetectionManager.swift */; };
+		A1000061243B0001 /* CallDetectionWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000071243B0001 /* CallDetectionWindow.swift */; };
+		A1000062243B0001 /* CloudStorageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000072243B0001 /* CloudStorageManager.swift */; };
+		A1000063243B0001 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000073243B0001 /* KeychainStore.swift */; };
+		A1000064243B0001 /* MeetingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000074243B0001 /* MeetingModels.swift */; };
+		A1000065243B0001 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000075243B0001 /* OnboardingView.swift */; };
+		A1000066243B0001 /* OpenAIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000076243B0001 /* OpenAIService.swift */; };
+		A100006A243B0001 /* AssemblyAIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007A243B0001 /* AssemblyAIService.swift */; };
+		A100006B243B0001 /* MediaStreamingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007B243B0001 /* MediaStreamingSession.swift */; };
+		A100006C243B0001 /* MediaStreamingTransports.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007C243B0001 /* MediaStreamingTransports.swift */; };
+		A100006D243B0001 /* MediaStreamingUploadJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007D243B0001 /* MediaStreamingUploadJournal.swift */; };
+		A100006E243B0001 /* OpenRecBrandIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007E243B0001 /* OpenRecBrandIcon.swift */; };
+		A100006F243B0001 /* APIKeyAutoVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100007F243B0001 /* APIKeyAutoVerifier.swift */; };
+		A1000067243B0001 /* WebhookDeliveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000077243B0001 /* WebhookDeliveryService.swift */; };
+		A1000068243B0001 /* RecordingLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000078243B0001 /* RecordingLibraryView.swift */; };
+		A1000069243B0001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000079243B0001 /* SettingsView.swift */; };
+		A100000B243B0001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A100001B243B0001 /* Assets.xcassets */; };
+		A100000C243B0001 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A100002C243B0001 /* ScreenCaptureKit.framework */; };
+		A100000D243B0001 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A100002D243B0001 /* AVFoundation.framework */; };
+		A100000E243B0001 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A100002E243B0001 /* CoreMedia.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A1000011243B0001 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A1000012243B0001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A1000013243B0001 /* RecorderManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderManager.swift; sourceTree = "<group>"; };
+		A1000014243B0001 /* ScreenRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenRecorder.swift; sourceTree = "<group>"; };
+		A1000015243B0001 /* FloatingPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingPanelView.swift; sourceTree = "<group>"; };
+		A1000016243B0001 /* PopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverView.swift; sourceTree = "<group>"; };
+		A1000017243B0001 /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
+		A1000018243B0001 /* RecordingOverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingOverlayWindow.swift; sourceTree = "<group>"; };
+		A1000019243B0001 /* WindowState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowState.swift; sourceTree = "<group>"; };
+		A100001A243B0001 /* VisualEffectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualEffectView.swift; sourceTree = "<group>"; };
+		A1000041243B0001 /* AudioMixer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioMixer.swift; sourceTree = "<group>"; };
+		A1000042243B0001 /* TranscriptionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionManager.swift; sourceTree = "<group>"; };
+		A1000043243B0001 /* TranscriptionPanelWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionPanelWindow.swift; sourceTree = "<group>"; };
+		A1000044243B0001 /* TranscriptionPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionPanelView.swift; sourceTree = "<group>"; };
+		A1000070243B0001 /* CallDetectionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDetectionManager.swift; sourceTree = "<group>"; };
+		A1000071243B0001 /* CallDetectionWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallDetectionWindow.swift; sourceTree = "<group>"; };
+		A1000072243B0001 /* CloudStorageManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudStorageManager.swift; sourceTree = "<group>"; };
+		A1000073243B0001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		A1000074243B0001 /* MeetingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingModels.swift; sourceTree = "<group>"; };
+		A1000075243B0001 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		A1000076243B0001 /* OpenAIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIService.swift; sourceTree = "<group>"; };
+		A100007A243B0001 /* AssemblyAIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssemblyAIService.swift; sourceTree = "<group>"; };
+		A100007B243B0001 /* MediaStreamingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaStreamingSession.swift; sourceTree = "<group>"; };
+		A100007C243B0001 /* MediaStreamingTransports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaStreamingTransports.swift; sourceTree = "<group>"; };
+		A100007D243B0001 /* MediaStreamingUploadJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaStreamingUploadJournal.swift; sourceTree = "<group>"; };
+		A100007E243B0001 /* OpenRecBrandIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenRecBrandIcon.swift; sourceTree = "<group>"; };
+		A100007F243B0001 /* APIKeyAutoVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeyAutoVerifier.swift; sourceTree = "<group>"; };
+		A1000077243B0001 /* WebhookDeliveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookDeliveryService.swift; sourceTree = "<group>"; };
+		A1000078243B0001 /* RecordingLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingLibraryView.swift; sourceTree = "<group>"; };
+		A1000079243B0001 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A100001B243B0001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A100001C243B0001 /* OpenRec.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OpenRec.entitlements; sourceTree = "<group>"; };
+		A100002B243B0001 /* OpenRec.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenRec.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A100002C243B0001 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
+		A100002D243B0001 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		A100002E243B0001 /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1000028243B0001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000C243B0001 /* ScreenCaptureKit.framework in Frameworks */,
+				8ED86E522F2CAFCB00A96850 /* Sparkle in Frameworks */,
+				A100000D243B0001 /* AVFoundation.framework in Frameworks */,
+				A100000E243B0001 /* CoreMedia.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A1000020243B0001 = {
+			isa = PBXGroup;
+			children = (
+				A1000021243B0001 /* OpenRec */,
+				A100002A243B0001 /* Products */,
+				A100002F243B0001 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		A1000021243B0001 /* OpenRec */ = {
+			isa = PBXGroup;
+			children = (
+				A1000011243B0001 /* main.swift */,
+				A1000012243B0001 /* AppDelegate.swift */,
+				A1000013243B0001 /* RecorderManager.swift */,
+				A1000014243B0001 /* ScreenRecorder.swift */,
+				A1000015243B0001 /* FloatingPanelView.swift */,
+				A1000016243B0001 /* PopoverView.swift */,
+				A1000017243B0001 /* UpdateManager.swift */,
+				A1000018243B0001 /* RecordingOverlayWindow.swift */,
+				A1000019243B0001 /* WindowState.swift */,
+				A100001A243B0001 /* VisualEffectView.swift */,
+				A1000041243B0001 /* AudioMixer.swift */,
+				A1000042243B0001 /* TranscriptionManager.swift */,
+				A1000043243B0001 /* TranscriptionPanelWindow.swift */,
+				A1000044243B0001 /* TranscriptionPanelView.swift */,
+				A1000070243B0001 /* CallDetectionManager.swift */,
+				A1000071243B0001 /* CallDetectionWindow.swift */,
+				A1000072243B0001 /* CloudStorageManager.swift */,
+				A100007B243B0001 /* MediaStreamingSession.swift */,
+				A100007C243B0001 /* MediaStreamingTransports.swift */,
+				A100007D243B0001 /* MediaStreamingUploadJournal.swift */,
+				A100007E243B0001 /* OpenRecBrandIcon.swift */,
+				A100007F243B0001 /* APIKeyAutoVerifier.swift */,
+				A1000073243B0001 /* KeychainStore.swift */,
+				A1000074243B0001 /* MeetingModels.swift */,
+				A1000075243B0001 /* OnboardingView.swift */,
+				A1000076243B0001 /* OpenAIService.swift */,
+				A100007A243B0001 /* AssemblyAIService.swift */,
+				A1000077243B0001 /* WebhookDeliveryService.swift */,
+				A1000078243B0001 /* RecordingLibraryView.swift */,
+				A1000079243B0001 /* SettingsView.swift */,
+				A100001B243B0001 /* Assets.xcassets */,
+				A100001C243B0001 /* OpenRec.entitlements */,
+			);
+			path = OpenRec;
+			sourceTree = "<group>";
+		};
+		A100002A243B0001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A100002B243B0001 /* OpenRec.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A100002F243B0001 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A100002C243B0001 /* ScreenCaptureKit.framework */,
+				A100002D243B0001 /* AVFoundation.framework */,
+				A100002E243B0001 /* CoreMedia.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1000022243B0001 /* OpenRec */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000025243B0001 /* Build configuration list for PBXNativeTarget "OpenRec" */;
+			buildPhases = (
+				A1000027243B0001 /* Sources */,
+				A1000028243B0001 /* Frameworks */,
+				A1000029243B0001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OpenRec;
+			productName = OpenRec;
+			productReference = A100002B243B0001 /* OpenRec.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1000023243B0001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A1000022243B0001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A1000024243B0001 /* Build configuration list for PBXProject "OpenRec" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A1000020243B0001;
+			packageReferences = (
+				8ED86E502F2CAFCB00A96850 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
+			productRefGroup = A100002A243B0001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1000022243B0001 /* OpenRec */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1000029243B0001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000B243B0001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1000027243B0001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000001243B0001 /* main.swift in Sources */,
+				A1000002243B0001 /* AppDelegate.swift in Sources */,
+				A1000003243B0001 /* RecorderManager.swift in Sources */,
+				A1000004243B0001 /* ScreenRecorder.swift in Sources */,
+				A1000005243B0001 /* FloatingPanelView.swift in Sources */,
+				A1000006243B0001 /* PopoverView.swift in Sources */,
+				A1000007243B0001 /* UpdateManager.swift in Sources */,
+				A1000008243B0001 /* RecordingOverlayWindow.swift in Sources */,
+				A1000009243B0001 /* WindowState.swift in Sources */,
+				A100000A243B0001 /* VisualEffectView.swift in Sources */,
+				A1000051243B0001 /* AudioMixer.swift in Sources */,
+				A1000052243B0001 /* TranscriptionManager.swift in Sources */,
+				A1000053243B0001 /* TranscriptionPanelWindow.swift in Sources */,
+				A1000054243B0001 /* TranscriptionPanelView.swift in Sources */,
+				A1000060243B0001 /* CallDetectionManager.swift in Sources */,
+				A1000061243B0001 /* CallDetectionWindow.swift in Sources */,
+				A1000062243B0001 /* CloudStorageManager.swift in Sources */,
+				A100006B243B0001 /* MediaStreamingSession.swift in Sources */,
+				A100006C243B0001 /* MediaStreamingTransports.swift in Sources */,
+				A100006D243B0001 /* MediaStreamingUploadJournal.swift in Sources */,
+				A100006E243B0001 /* OpenRecBrandIcon.swift in Sources */,
+				A100006F243B0001 /* APIKeyAutoVerifier.swift in Sources */,
+				A1000063243B0001 /* KeychainStore.swift in Sources */,
+				A1000064243B0001 /* MeetingModels.swift in Sources */,
+				A1000065243B0001 /* OnboardingView.swift in Sources */,
+				A1000066243B0001 /* OpenAIService.swift in Sources */,
+				A100006A243B0001 /* AssemblyAIService.swift in Sources */,
+				A1000067243B0001 /* WebhookDeliveryService.swift in Sources */,
+				A1000068243B0001 /* RecordingLibraryView.swift in Sources */,
+				A1000069243B0001 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1000030243B0001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A1000031243B0001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		A1000032243B0001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = OpenRec/OpenRec.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_TEAM = G58RTP74UP;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "OpenRec/Info-Debug.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 OpenRec.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "OpenRec needs microphone access to record audio with your screen recordings.";
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "OpenRec needs screen recording permission to capture your screen and system audio.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.6;
+				PRODUCT_BUNDLE_IDENTIFIER = app.openrec.mac.dev;
+				PRODUCT_NAME = "OpenRec Dev";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1000033243B0001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = OpenRec/OpenRec.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_TEAM = G58RTP74UP;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = OpenRec/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 OpenRec.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "OpenRec needs microphone access to record audio with your screen recordings.";
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "OpenRec needs screen recording permission to capture your screen and system audio.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.6;
+				PRODUCT_BUNDLE_IDENTIFIER = app.openrec.mac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1000024243B0001 /* Build configuration list for PBXProject "OpenRec" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000030243B0001 /* Debug */,
+				A1000031243B0001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000025243B0001 /* Build configuration list for PBXNativeTarget "OpenRec" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000032243B0001 /* Debug */,
+				A1000033243B0001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8ED86E502F2CAFCB00A96850 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.8.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8ED86E512F2CAFCB00A96850 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8ED86E502F2CAFCB00A96850 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A1000023243B0001 /* Project object */;
+}

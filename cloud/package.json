@@ -1,0 +1,20 @@
+{
+  "name": "openrec-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 execute openrec --local --file=schema.sql",
+    "db:migrate": "wrangler d1 execute openrec --remote --file=schema.sql",
+    "db:migrate:media:local": "wrangler d1 execute openrec --local --file=migrations/0002_immutable_media_uploads.sql",
+    "db:migrate:media": "wrangler d1 execute openrec --remote --file=migrations/0002_immutable_media_uploads.sql",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260810.1",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.120.1"
+  }
+}

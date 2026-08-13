@@ -2,8 +2,13 @@ import Foundation
 import CoreMedia
 import Combine
 
+protocol RealtimeTranscriptionDelegate: AnyObject {
+    func realtimeTranscriptionDidUpdate(_ text: String)
+    func realtimeTranscriptionDidCommit(_ text: String, speakerLabel: String?)
+    func realtimeTranscriptionDidFail(_ error: Error)
+}
+
 enum TranscriptionMode: String, CaseIterable {
-    case off = "Off"
     case live = "Live"
     case postRecording = "After"
 }
@@ -16,268 +21,236 @@ struct DisplaySegment: Identifiable {
 }
 
 @MainActor
-class TranscriptionManager: ObservableObject {
-    @Published var mode: TranscriptionMode = .off
+final class TranscriptionManager: ObservableObject {
+    @Published var mode: TranscriptionMode = TranscriptionMode(
+        rawValue: UserDefaults.standard.string(forKey: "TranscriptionMode") ?? ""
+    ) ?? .live {
+        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "TranscriptionMode") }
+    }
     @Published var isTranscribing = false
+    @Published var isAnalyzing = false
     @Published var showPanel = false
-    @Published var partialText: String = ""
+    @Published var partialText = ""
     @Published var committedSegments: [DisplaySegment] = []
+    @Published var insights = MeetingInsights()
     @Published var error: String?
 
-    private var realtimeSTT: ElevenLabsRealtimeSTT?
-    private var assemblyAISTT: AssemblyAIRealtimeSTT?
+    private var realtimeSTT: AssemblyAIRealtimeTranscriber?
     private(set) var audioMixer: AudioMixer?
-    private var delegateBridge: STTDelegateBridge?
-    private var speakerMap: [String: String] = [:]
-    private var nextSpeakerNumber = 1
-    /// Saved energy timeline for post-recording speaker labeling.
+    private var delegateBridge: RealtimeBridge?
     private var savedEnergyTimeline: [AudioEnergySnapshot] = []
 
-    let callTipsManager = CallTipsManager()
-
-    private let apiKeyKey = "ElevenLabsAPIKey"
-    private let openRouterKeyKey = "OpenRouterAPIKey"
-    private let assemblyAIKeyKey = "AssemblyAIAPIKey"
-
-    var openRouterKey: String {
-        get { UserDefaults.standard.string(forKey: openRouterKeyKey) ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: openRouterKeyKey); objectWillChange.send() }
-    }
-
-    var hasOpenRouterKey: Bool {
-        !openRouterKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var apiKey: String {
-        get { UserDefaults.standard.string(forKey: apiKeyKey) ?? "" }
+    var assemblyAIAPIKey: String {
+        get { KeychainStore.string(for: "assemblyai-api-key") }
         set {
-            UserDefaults.standard.set(newValue, forKey: apiKeyKey)
+            let normalized = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let changed = normalized
+                != assemblyAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            KeychainStore.set(normalized, for: "assemblyai-api-key")
+            if changed { UserDefaults.standard.set(false, forKey: "AssemblyAIKeyVerified") }
             objectWillChange.send()
         }
     }
 
-    var assemblyAIKey: String {
-        get { UserDefaults.standard.string(forKey: assemblyAIKeyKey) ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: assemblyAIKeyKey); objectWillChange.send() }
+    var openAIAPIKey: String {
+        get { KeychainStore.string(for: "openai-api-key") }
+        set {
+            let normalized = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let changed = normalized
+                != openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            KeychainStore.set(normalized, for: "openai-api-key")
+            if changed { UserDefaults.standard.set(false, forKey: "OpenAIKeyVerified") }
+            objectWillChange.send()
+        }
     }
 
-    var hasAssemblyAIKey: Bool {
-        !assemblyAIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    var hasAssemblyAIAPIKey: Bool {
+        !assemblyAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// True if ElevenLabs key is configured (used for both live and post-recording)
-    var hasAPIKey: Bool {
-        !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    var isAssemblyAIAPIKeyVerified: Bool {
+        hasAssemblyAIAPIKey && UserDefaults.standard.bool(forKey: "AssemblyAIKeyVerified")
+    }
+
+    var hasOpenAIAPIKey: Bool {
+        !openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var isOpenAIAPIKeyVerified: Bool {
+        hasOpenAIAPIKey && UserDefaults.standard.bool(forKey: "OpenAIKeyVerified")
     }
 
     func startLiveTranscription() {
-        guard hasAPIKey, mode == .live else { return }
-        reset()
+        guard hasAssemblyAIAPIKey, mode == .live else { return }
+        resetTranscript()
         isTranscribing = true
 
         let mixer = AudioMixer()
         audioMixer = mixer
-
-        let bridge = STTDelegateBridge(manager: self)
+        let bridge = RealtimeBridge(manager: self)
         delegateBridge = bridge
-
-        let stt = ElevenLabsRealtimeSTT(apiKey: apiKey)
-        realtimeSTT = stt
-        stt.delegate = bridge
-        mixer.onChunkReady = { [weak stt] data in
-            stt?.sendAudioChunk(data)
-        }
-        stt.connect()
-
+        let transcriber = AssemblyAIRealtimeTranscriber(apiKey: assemblyAIAPIKey)
+        realtimeSTT = transcriber
+        transcriber.delegate = bridge
+        mixer.onChunkReady = { [weak transcriber] data in transcriber?.sendAudioChunk(data) }
+        transcriber.connect()
         mixer.start()
     }
 
-    /// Start only the audio mixer for energy tracking (used in post-recording mode).
     func startEnergyTracking() {
         let mixer = AudioMixer()
         audioMixer = mixer
-        mixer.onChunkReady = { _ in } // discard audio, we only need energy data
+        mixer.onChunkReady = { _ in }
         mixer.start()
     }
 
-    /// Stop energy tracking and save the timeline.
     func stopEnergyTracking() {
-        if let mixer = audioMixer {
-            savedEnergyTimeline = mixer.energyTimeline
-        }
+        if let mixer = audioMixer { savedEnergyTimeline = mixer.energyTimeline }
         audioMixer?.stop()
         audioMixer = nil
     }
 
     func stopLiveTranscription() {
-        // Save energy timeline before stopping mixer
-        if let mixer = audioMixer {
-            savedEnergyTimeline = mixer.energyTimeline
-        }
+        if let mixer = audioMixer { savedEnergyTimeline = mixer.energyTimeline }
         audioMixer?.stop()
         audioMixer = nil
         realtimeSTT?.disconnect()
         realtimeSTT = nil
-        assemblyAISTT?.disconnect()
-        assemblyAISTT = nil
         delegateBridge = nil
         isTranscribing = false
+        partialText = ""
     }
 
-    /// Returns the current AudioMixer reference so callers on audio threads can call it directly.
-    /// AudioMixer is thread-safe via internal NSLock.
-    func getAudioMixer() -> AudioMixer? {
-        return audioMixer
-    }
+    func getAudioMixer() -> AudioMixer? { audioMixer }
 
-    func transcribeRecording(audioURL: URL, outputDir: URL) {
-        guard hasAPIKey, mode == .postRecording else { return }
-        reset()
+    func transcribeRecording(audioURL: URL) async throws {
+        guard hasAssemblyAIAPIKey else {
+            throw OpenRecError.invalidConfiguration("Add your AssemblyAI API key before recording.")
+        }
         isTranscribing = true
-
-        let batch = ElevenLabsBatchSTT(apiKey: apiKey)
-
-        // Prefer mp3 if it exists, otherwise use mp4
-        let mp3URL = audioURL.deletingPathExtension().appendingPathExtension("mp3")
-        let fileToTranscribe = FileManager.default.fileExists(atPath: mp3URL.path) ? mp3URL : audioURL
-
-        batch.transcribe(fileURL: fileToTranscribe) { [weak self] result in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                switch result {
-                case .success(let segments):
-                    for segment in segments {
-                        let timestamp = segment.words.first?.start
-                        let label = self.speakerLabelFromEnergy(at: timestamp)
-                        self.committedSegments.append(DisplaySegment(
-                            speakerLabel: label,
-                            text: segment.text,
-                            timestamp: timestamp
-                        ))
-                    }
-                    self.isTranscribing = false
-
-                    // Auto-save transcript
-                    let baseName = audioURL.deletingPathExtension().lastPathComponent
-                    self.saveTranscript(to: outputDir, baseName: baseName)
-
-                    // Fire a single tips request after batch transcription
-                    if self.hasOpenRouterKey {
-                        self.callTipsManager.requestOnce(transcriptionManager: self)
-                    }
-                case .failure(let error):
-                    self.error = error.localizedDescription
-                    self.isTranscribing = false
-                }
-            }
+        error = nil
+        defer { isTranscribing = false }
+        do {
+            let segments = try await AssemblyAIService(apiKey: assemblyAIAPIKey).transcribe(fileURL: audioURL)
+            committedSegments = segments
+            partialText = ""
+        } catch {
+            self.error = error.localizedDescription
+            throw error
         }
     }
 
-    func saveTranscript(to directory: URL, baseName: String) {
+    func transcribeCloudRecording(audioURL: URL) async throws {
+        guard hasAssemblyAIAPIKey else {
+            throw OpenRecError.invalidConfiguration("Add your AssemblyAI API key before recording.")
+        }
+        isTranscribing = true
+        error = nil
+        defer { isTranscribing = false }
+        do {
+            let segments = try await AssemblyAIService(apiKey: assemblyAIAPIKey).transcribe(audioURL: audioURL)
+            committedSegments = segments
+            partialText = ""
+        } catch {
+            self.error = error.localizedDescription
+            throw error
+        }
+    }
+
+    func analyze(callTitle: String?) async throws -> MeetingInsights {
+        let transcript = fullTranscriptText()
+        guard !transcript.isEmpty else { return MeetingInsights() }
+        guard hasOpenAIAPIKey else {
+            throw OpenRecError.invalidConfiguration("Add your OpenAI API key to generate meeting memory.")
+        }
+        isAnalyzing = true
+        defer { isAnalyzing = false }
+        do {
+            let value = try await OpenAIService(apiKey: openAIAPIKey).generateInsights(
+                transcript: transcript,
+                callTitle: callTitle
+            )
+            insights = value
+            return value
+        } catch {
+            self.error = error.localizedDescription
+            throw error
+        }
+    }
+
+    func saveTranscript(to directory: URL, baseName: String) throws {
         guard !committedSegments.isEmpty else { return }
-        let text = fullTranscriptText()
         let fileURL = directory.appendingPathComponent("\(baseName)_transcript.txt")
-        try? text.write(to: fileURL, atomically: true, encoding: .utf8)
+        try fullTranscriptText().write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
     func fullTranscriptText() -> String {
         committedSegments.map { "[\($0.speakerLabel)] \($0.text)" }.joined(separator: "\n")
     }
 
-    func reset() {
+    func resetTranscript() {
         partialText = ""
         committedSegments = []
         error = nil
-        speakerMap = [:]
-        nextSpeakerNumber = 1
+        insights = MeetingInsights()
         savedEnergyTimeline = []
     }
 
-    fileprivate func speakerLabel(for speakerID: String?) -> String {
-        guard let speakerID, !speakerID.isEmpty else { return "Speaker" }
-        if let existing = speakerMap[speakerID] { return existing }
-        let label = "Speaker \(nextSpeakerNumber)"
-        nextSpeakerNumber += 1
-        speakerMap[speakerID] = label
-        return label
-    }
+    fileprivate func handlePartial(_ text: String) { partialText = text }
 
-    /// Determine speaker label from audio energy at the given timestamp.
-    fileprivate func speakerLabelFromEnergy(at timestamp: Double?) -> String {
-        guard let timestamp else { return "Others" }
-
-        // Get the energy timeline from the live mixer or saved copy
-        let timeline: [AudioEnergySnapshot]
-        if let mixer = audioMixer {
-            timeline = mixer.energyTimeline
-        } else {
-            timeline = savedEnergyTimeline
-        }
-        guard !timeline.isEmpty else { return "Others" }
-
-        // Find the closest snapshot to this timestamp
-        var closest = timeline[0]
-        var bestDiff = abs(closest.timestamp - timestamp)
-        for snapshot in timeline {
-            let diff = abs(snapshot.timestamp - timestamp)
-            if diff < bestDiff {
-                bestDiff = diff
-                closest = snapshot
-            }
-            // Timeline is sorted, so if we're past the timestamp we can stop
-            if snapshot.timestamp > timestamp + 1.0 { break }
-        }
-
-        return closest.dominantSource == .mic ? "Me" : "Others"
-    }
-
-    fileprivate func handlePartialTranscript(_ text: String) {
-        partialText = text
-    }
-
-    fileprivate func handleCommittedTranscript(_ segment: TranscriptSegment) {
+    fileprivate func handleCommitted(_ text: String, speakerLabel: String?) {
         partialText = ""
-        let timestamp = segment.words.first?.start
-        let label = speakerLabelFromEnergy(at: timestamp)
+        let timestamp = savedEnergyTimeline.last?.timestamp ?? audioMixer?.energyTimeline.last?.timestamp
         committedSegments.append(DisplaySegment(
-            speakerLabel: label,
-            text: segment.text,
+            speakerLabel: normalizedSpeakerLabel(speakerLabel) ?? speakerLabelFromEnergy(at: timestamp),
+            text: text,
             timestamp: timestamp
         ))
     }
 
-    fileprivate func handleDisconnect(error: Error?) {
-        if let error {
-            self.error = error.localizedDescription
-        }
+    fileprivate func handleFailure(_ failure: Error) {
+        error = failure.localizedDescription
         isTranscribing = false
+    }
+
+    private func speakerLabelFromEnergy(at timestamp: Double?) -> String {
+        guard let timestamp else { return "Conversation" }
+        let timeline = audioMixer?.energyTimeline ?? savedEnergyTimeline
+        guard var closest = timeline.first else { return "Conversation" }
+        var difference = abs(closest.timestamp - timestamp)
+        for snapshot in timeline {
+            let candidate = abs(snapshot.timestamp - timestamp)
+            if candidate < difference { closest = snapshot; difference = candidate }
+            if snapshot.timestamp > timestamp + 1 { break }
+        }
+        return closest.dominantSource == .mic ? "Me" : "Others"
+    }
+
+    private func normalizedSpeakerLabel(_ label: String?) -> String? {
+        guard let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty else {
+            return nil
+        }
+        return label.localizedCaseInsensitiveCompare("unknown") == .orderedSame
+            ? "Speaker"
+            : "Speaker \(label)"
     }
 }
 
-// MARK: - Delegate Bridge (nonisolated → @MainActor)
-
-private class STTDelegateBridge: ElevenLabsSTTDelegate {
+private final class RealtimeBridge: RealtimeTranscriptionDelegate {
     private weak var manager: TranscriptionManager?
+    init(manager: TranscriptionManager) { self.manager = manager }
 
-    init(manager: TranscriptionManager) {
-        self.manager = manager
+    func realtimeTranscriptionDidUpdate(_ text: String) {
+        Task { @MainActor [weak self] in self?.manager?.handlePartial(text) }
     }
 
-    func sttDidReceivePartialTranscript(_ text: String) {
+    func realtimeTranscriptionDidCommit(_ text: String, speakerLabel: String?) {
         Task { @MainActor [weak self] in
-            self?.manager?.handlePartialTranscript(text)
+            self?.manager?.handleCommitted(text, speakerLabel: speakerLabel)
         }
     }
 
-    func sttDidReceiveCommittedTranscript(_ segment: TranscriptSegment) {
-        Task { @MainActor [weak self] in
-            self?.manager?.handleCommittedTranscript(segment)
-        }
-    }
-
-    func sttDidDisconnect(error: Error?) {
-        Task { @MainActor [weak self] in
-            self?.manager?.handleDisconnect(error: error)
-        }
+    func realtimeTranscriptionDidFail(_ error: Error) {
+        Task { @MainActor [weak self] in self?.manager?.handleFailure(error) }
     }
 }

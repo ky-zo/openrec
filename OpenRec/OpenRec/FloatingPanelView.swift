@@ -4,95 +4,45 @@ import AppKit
 struct FloatingPanelView: View {
     @ObservedObject var recorderManager: RecorderManager
     @ObservedObject var windowState: WindowState
+    let onOpenSettings: () -> Void
+    let onOpenLibrary: () -> Void
 
-    /// Right panel: during recording, user-controlled via showPanel toggle;
-    /// when not recording, auto-show when mode != .off.
     private var showRightPanel: Bool {
-        if windowState.isCollapsed { return false }
-        let tm = recorderManager.transcriptionManager
-        if tm.mode == .off { return false }
-        if recorderManager.isRecording {
-            return tm.showPanel // user toggles via expand button
-        }
-        return true
-    }
-
-    /// Transcript content vs settings in the right panel
-    private var showTranscript: Bool {
-        let tm = recorderManager.transcriptionManager
-        if windowState.isCollapsed { return false }
-        if recorderManager.isRecording && tm.mode == .live && tm.hasAPIKey { return true }
-        if tm.showPanel && !tm.committedSegments.isEmpty { return true }
-        if tm.isTranscribing { return true }
-        return false
-    }
-
-    /// Tips show during live recording or when transcript results are available
-    private var showTips: Bool {
-        if windowState.isCollapsed { return false }
-        let tm = recorderManager.transcriptionManager
-        if !tm.hasOpenRouterKey { return false }
-        if recorderManager.isRecording && tm.mode == .live && tm.hasAPIKey { return true }
-        if tm.isTranscribing { return true }
-        if tm.showPanel && !tm.committedSegments.isEmpty { return true }
-        return false
+        guard !windowState.isCollapsed else { return false }
+        return recorderManager.transcriptionManager.showPanel
     }
 
     var body: some View {
         ZStack {
-            // Single shared background for the entire window
             VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
             Color.black.opacity(0.45)
 
-            // Content layout — no SwiftUI animations here;
-            // the NSWindow frame animation handles all sizing transitions.
-            VStack(spacing: 0) {
-                HStack(alignment: .top, spacing: 0) {
-                    // Main panel — pinned to top so it doesn't drift when window grows
-                    VStack(spacing: 0) {
-                        HeaderView(recorderManager: recorderManager, windowState: windowState)
+            HStack(alignment: .top, spacing: 0) {
+                VStack(spacing: 0) {
+                    HeaderView(
+                        recorderManager: recorderManager,
+                        windowState: windowState,
+                        onOpenSettings: onOpenSettings
+                    )
 
-                        if windowState.isCollapsed {
-                            CompactControlsView(recorderManager: recorderManager)
-                        } else if recorderManager.isRecording {
-                            RecordingControlsView(recorderManager: recorderManager)
-                        } else {
-                            PopoverContentView(recorderManager: recorderManager)
-                        }
-
-                        Spacer(minLength: 0)
+                    if windowState.isCollapsed {
+                        CompactControlsView(recorderManager: recorderManager, onOpenLibrary: onOpenLibrary)
+                    } else if recorderManager.isRecording {
+                        RecordingControlsView(recorderManager: recorderManager)
+                    } else {
+                        PopoverContentView(recorderManager: recorderManager, onOpenLibrary: onOpenLibrary)
                     }
-                    .frame(width: 240)
 
-                    // Right panel: transcript or settings
-                    if showRightPanel {
-                        Color.white.opacity(0.15)
-                            .frame(width: 1)
-
-                        Group {
-                            if showTranscript {
-                                TranscriptionInlineView(
-                                    transcriptionManager: recorderManager.transcriptionManager,
-                                    onClose: {
-                                        recorderManager.transcriptionManager.showPanel = false
-                                    }
-                                )
-                            } else {
-                                APIKeySettingsView(transcriptionManager: recorderManager.transcriptionManager)
-                            }
-                        }
-                        .frame(width: 280)
-                    }
+                    Spacer(minLength: 0)
                 }
-                .clipped()
+                .frame(width: 240)
 
-                // Tips row — full width below both panels
-                if showTips {
+                if showRightPanel {
                     Color.white.opacity(0.15)
-                        .frame(height: 1)
+                        .frame(width: 1)
 
-                    TipsInlineView(transcriptionManager: recorderManager.transcriptionManager)
-                        .frame(height: recorderManager.isRecording ? 200 : 140)
+                    MeetingMemoryView(recorderManager: recorderManager)
+                        .frame(width: 280)
                 }
             }
             .clipped()
@@ -105,19 +55,81 @@ struct FloatingPanelView: View {
     }
 }
 
-// MARK: - Recording Controls (compact single row)
+struct ASCIISpinner: View {
+    let size: CGFloat
+    private let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.08)) { context in
+            let frame = Int(context.date.timeIntervalSinceReferenceDate / 0.08)
+            Text(frames[frame % frames.count])
+                .font(.system(size: size, weight: .medium, design: .monospaced))
+                .foregroundColor(.white.opacity(0.7))
+        }
+    }
+}
+
+private struct HeaderView: View {
+    @ObservedObject var recorderManager: RecorderManager
+    @ObservedObject var windowState: WindowState
+    let onOpenSettings: () -> Void
+    @State private var hoveringSettings = false
+    @State private var hoveringCollapse = false
+    @State private var hoveringQuit = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(recorderManager.isRecording ? Color.red : Color.white.opacity(0.35))
+                .frame(width: 6, height: 6)
+
+            Text("OpenRec")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.9))
+
+            Spacer()
+
+            Button(action: onOpenSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 10.5, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.white.opacity(hoveringSettings ? 1 : 0.66))
+            .disabled(recorderManager.isRecording || recorderManager.isProcessing)
+            .opacity(recorderManager.isRecording || recorderManager.isProcessing ? 0.35 : 1)
+            .help("Settings")
+            .onHover { hoveringSettings = $0 }
+
+            Button {
+                windowState.isCollapsed.toggle()
+            } label: {
+                Image(systemName: windowState.isCollapsed ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 10.5, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.white.opacity(hoveringCollapse ? 1 : 0.66))
+            .onHover { hoveringCollapse = $0 }
+
+            Button { NSApp.terminate(nil) } label: {
+                Image(systemName: "power")
+                    .font(.system(size: 10.5, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.white.opacity(hoveringQuit ? 1 : 0.66))
+            .onHover { hoveringQuit = $0 }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+}
 
 private struct RecordingControlsView: View {
     @ObservedObject var recorderManager: RecorderManager
-    @State private var isHovering = false
-    @State private var isHoveringExpand = false
+    @State private var hoveringStop = false
 
     var body: some View {
         HStack(spacing: 10) {
-            // Stop button
-            Button(action: {
-                recorderManager.stopRecording()
-            }) {
+            Button { recorderManager.stopRecording() } label: {
                 ZStack {
                     Circle()
                         .fill(Color.white.opacity(0.15))
@@ -126,354 +138,107 @@ private struct RecordingControlsView: View {
                         .fill(Color.white)
                         .frame(width: 10, height: 10)
                 }
-                .scaleEffect(isHovering ? 1.08 : 1.0)
-                .animation(.easeInOut(duration: 0.15), value: isHovering)
+                .scaleEffect(hoveringStop ? 1.08 : 1)
+                .animation(.easeOut(duration: 0.15), value: hoveringStop)
             }
             .buttonStyle(.plain)
-            .onHover { isHovering = $0 }
+            .onHover { hoveringStop = $0 }
 
-            // Timer
             Text(formatDuration(recorderManager.duration))
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(.white)
 
-            // Waveform
             AudioWaveformView(
                 micLevel: recorderManager.micLevel,
                 systemLevel: recorderManager.systemLevel
             )
-            .frame(width: 60, height: 14)
+            .frame(width: 54, height: 14)
 
-            Spacer()
+            Image(systemName: recorderManager.cloudUploadHasFailed ? "icloud.slash.fill" : "icloud.and.arrow.up.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(recorderManager.cloudUploadNeedsAttention ? .orange : .green.opacity(0.82))
+                .help(recorderManager.cloudUploadStatusText)
 
-            // Expand/collapse transcript button
-            if recorderManager.transcriptionManager.mode != .off {
-                Button(action: {
-                    recorderManager.transcriptionManager.showPanel.toggle()
-                }) {
-                    Image(systemName: "sidebar.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(
-                            recorderManager.transcriptionManager.showPanel
-                                ? 0.9
-                                : (isHoveringExpand ? 0.7 : 0.4)
-                        ))
-                }
-                .buttonStyle(.plain)
-                .onHover { isHoveringExpand = $0 }
+            Spacer(minLength: 2)
+
+            Menu {
+                Toggle("Keep screen recording", isOn: preferenceBinding(recorderManager, \.keepScreenRecording))
+                Toggle("Keep audio recording", isOn: preferenceBinding(recorderManager, \.keepAudioRecording))
+                Divider()
+                Toggle("Store transcript in meeting library", isOn: preferenceBinding(recorderManager, \.storeTranscriptInCloud))
+                    .disabled(recorderManager.cloudStorage.mode == .managed && !recorderManager.cloudStorage.canStoreTranscriptInCloud)
+                Toggle("Send to webhook", isOn: preferenceBinding(recorderManager, \.sendToWebhook))
+                    .disabled(!recorderManager.webhookSettings.isConfigured)
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.62))
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("What to keep after this call")
+
+            Button { recorderManager.transcriptionManager.showPanel.toggle() } label: {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(recorderManager.transcriptionManager.showPanel ? 0.9 : 0.52))
+            }
+            .buttonStyle(.plain)
+            .help("Meeting notes")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-    }
-
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        let totalSeconds = Int(seconds)
-        let hrs = totalSeconds / 3600
-        let mins = (totalSeconds % 3600) / 60
-        let secs = totalSeconds % 60
-        if hrs > 0 {
-            return String(format: "%d:%02d:%02d", hrs, mins, secs)
-        } else {
-            return String(format: "%02d:%02d", mins, secs)
-        }
-    }
-}
-
-// MARK: - ASCII Spinner
-
-struct ASCIISpinner: View {
-    let size: CGFloat
-    @State private var frame = 0
-    private let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-    var body: some View {
-        Text(frames[frame % frames.count])
-            .font(.system(size: size, weight: .medium, design: .monospaced))
-            .foregroundColor(.white.opacity(0.7))
-            .onAppear {
-                Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { _ in
-                    frame += 1
-                }
-            }
-    }
-}
-
-// MARK: - API Key Settings (Right Panel)
-
-private struct APIKeySettingsView: View {
-    @ObservedObject var transcriptionManager: TranscriptionManager
-
-    private let primaryText = Color.white.opacity(0.9)
-    private let secondaryText = Color.white.opacity(0.6)
-    private let hintText = Color.white.opacity(0.45)
-    private let placeholderText = Color.white.opacity(0.5)
-    private let labelFont = Font.system(size: 11, weight: .medium)
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "key")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(primaryText)
-
-                Text("API Keys")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(primaryText)
-
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            Color.white.opacity(0.1)
-                .frame(height: 1)
-
-            ScrollView {
-                VStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("ElevenLabs")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(secondaryText)
-
-                        SecureField(
-                            "",
-                            text: Binding(
-                                get: { transcriptionManager.apiKey },
-                                set: { transcriptionManager.apiKey = $0 }
-                            ),
-                            prompt: Text("API key").foregroundColor(placeholderText)
-                        )
-                        .textFieldStyle(.plain)
-                        .font(labelFont)
-                        .foregroundColor(primaryText)
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 8)
-                        .background(Color.white.opacity(0.08))
-                        .cornerRadius(6)
-
-                        if transcriptionManager.hasAPIKey {
-                            Label("Transcription ready", systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.green.opacity(0.8))
-                        } else {
-                            Label("Required for Live & After", systemImage: "exclamationmark.circle")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.orange.opacity(0.8))
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("OpenRouter")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(secondaryText)
-
-                        SecureField(
-                            "",
-                            text: Binding(
-                                get: { transcriptionManager.openRouterKey },
-                                set: { transcriptionManager.openRouterKey = $0 }
-                            ),
-                            prompt: Text("API key (for tips)").foregroundColor(placeholderText)
-                        )
-                        .textFieldStyle(.plain)
-                        .font(labelFont)
-                        .foregroundColor(primaryText)
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 8)
-                        .background(Color.white.opacity(0.08))
-                        .cornerRadius(6)
-
-                        if transcriptionManager.hasOpenRouterKey {
-                            Label("Tips ready", systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.green.opacity(0.8))
-                        } else {
-                            Label("Optional — enables call tips", systemImage: "info.circle")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(hintText)
-                        }
-                    }
-                }
-                .padding(12)
-            }
-        }
-    }
-}
-
-// MARK: - Tips Inline View
-
-private struct TipsInlineView: View {
-    @ObservedObject var transcriptionManager: TranscriptionManager
-
-    private let primaryText = Color.white.opacity(0.9)
-    private let secondaryText = Color.white.opacity(0.6)
-    private let hintText = Color.white.opacity(0.45)
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.yellow.opacity(0.9))
-
-                Text("Tips")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(primaryText)
-
-                if transcriptionManager.callTipsManager.isLoading {
-                    ASCIISpinner(size: 11)
-                        .frame(width: 14, height: 14)
-                }
-
-                Spacer()
-
-                Button(action: {
-                    transcriptionManager.callTipsManager.requestOnce(transcriptionManager: transcriptionManager)
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(transcriptionManager.callTipsManager.isLoading ? 0.2 : 0.5))
-                }
-                .buttonStyle(.plain)
-                .disabled(transcriptionManager.callTipsManager.isLoading)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-
-            Color.white.opacity(0.06)
-                .frame(height: 1)
-
-            ScrollView {
-                if transcriptionManager.callTipsManager.tips.isEmpty && !transcriptionManager.callTipsManager.isLoading {
-                    Text("Tips will appear during the call...")
-                        .font(.system(size: 13))
-                        .foregroundColor(hintText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
-                } else {
-                    Text(transcriptionManager.callTipsManager.tips)
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.9))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Header
-
-private struct HeaderView: View {
-    @ObservedObject var recorderManager: RecorderManager
-    @ObservedObject var windowState: WindowState
-    @State private var isHoveringToggle = false
-    @State private var isHoveringQuit = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(recorderManager.isRecording ? Color.red : Color.white.opacity(0.35))
-                .frame(width: 6, height: 6)
-
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("OpenRec")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.9))
-
-                Text("by Fluar.com")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.45))
-            }
-
-            Spacer()
-
-            Button(action: {
-                windowState.isCollapsed.toggle()
-            }) {
-                Image(systemName: windowState.isCollapsed ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.white.opacity(isHoveringToggle ? 1.0 : 0.7))
-            .onHover { hovering in
-                isHoveringToggle = hovering
-            }
-
-            Button(action: {
-                NSApplication.shared.terminate(nil)
-            }) {
-                Image(systemName: "power")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.white.opacity(isHoveringQuit ? 1.0 : 0.7))
-            .onHover { hovering in
-                isHoveringQuit = hovering
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 }
 
 private struct CompactControlsView: View {
     @ObservedObject var recorderManager: RecorderManager
-    @State private var isHovering = false
+    let onOpenLibrary: () -> Void
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             if recorderManager.isProcessing || recorderManager.isStarting {
                 ASCIISpinner(size: 18)
                     .frame(width: 32, height: 32)
             } else {
-                Button(action: {
-                    if recorderManager.isRecording {
+                Button {
+                    if case .failed = recorderManager.savePhase {
+                        if recorderManager.canRetryLastSave { recorderManager.retryLastSave() }
+                        else { onOpenLibrary() }
+                    } else if recorderManager.isRecording {
                         recorderManager.stopRecording()
                     } else {
-                        Task {
-                            await recorderManager.startRecording()
-                        }
+                        Task { await recorderManager.startRecording() }
                     }
-                }) {
+                } label: {
                     ZStack {
                         Circle()
                             .fill(recorderManager.isRecording ? Color.white.opacity(0.15) : Color.red)
                             .frame(width: 32, height: 32)
-
                         if recorderManager.isRecording {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.white)
-                                .frame(width: 12, height: 12)
+                            RoundedRectangle(cornerRadius: 2).fill(Color.white).frame(width: 12, height: 12)
+                        } else if case .failed = recorderManager.savePhase {
+                            Image(systemName: recorderManager.canRetryLastSave ? "arrow.clockwise" : "exclamationmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white)
                         } else {
-                            Circle()
-                                .fill(Color.white.opacity(0.9))
-                                .frame(width: 12, height: 12)
+                            Circle().fill(Color.white.opacity(0.9)).frame(width: 12, height: 12)
                         }
                     }
-                    .scaleEffect(isHovering ? 1.08 : 1.0)
-                    .animation(.easeInOut(duration: 0.15), value: isHovering)
                 }
                 .buttonStyle(.plain)
-                .onHover { hovering in
-                    isHovering = hovering
-                }
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(statusText)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
-
-                Text(formatDuration(recorderManager.duration))
+                Text(statusDetail)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(.white.opacity(0.65))
+                    .lineLimit(1)
             }
-
             Spacer()
         }
         .padding(.horizontal, 12)
@@ -481,25 +246,252 @@ private struct CompactControlsView: View {
     }
 
     private var statusText: String {
-        if recorderManager.isProcessing {
-            return "Saving..."
-        }
-        if recorderManager.isStarting {
-            return "Starting..."
-        }
+        if recorderManager.isProcessing { return recorderManager.savePhase.label }
+        if recorderManager.isStarting { return "Starting…" }
+        if case .failed = recorderManager.savePhase { return "Save failed" }
         return recorderManager.isRecording ? "Recording" : "Ready"
     }
 
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        let totalSeconds = Int(seconds)
-        let hrs = totalSeconds / 3600
-        let mins = (totalSeconds % 3600) / 60
-        let secs = totalSeconds % 60
+    private var statusDetail: String {
+        if case .failed = recorderManager.savePhase {
+            return recorderManager.canRetryLastSave ? "Click to retry" : "Open Meetings for recovery"
+        }
+        return formatDuration(recorderManager.duration)
+    }
+}
 
-        if hrs > 0 {
-            return String(format: "%d:%02d:%02d", hrs, mins, secs)
-        } else {
-            return String(format: "%02d:%02d", mins, secs)
+private struct MeetingMemoryView: View {
+    @ObservedObject var recorderManager: RecorderManager
+    @State private var copied = false
+
+    private var hasInsightMemory: Bool {
+        let insights = recorderManager.transcriptionManager.insights
+        return !insights.summary.isEmpty
+            || !insights.participants.isEmpty
+            || !insights.actionItems.isEmpty
+            || !insights.decisions.isEmpty
+    }
+
+    private var hasTranscriptMemory: Bool {
+        !recorderManager.transcriptionManager.committedSegments.isEmpty
+    }
+
+    private var hasVisibleMemory: Bool {
+        hasInsightMemory
+            || hasTranscriptMemory
+            || !recorderManager.transcriptionManager.partialText.isEmpty
+    }
+
+    private var isSaveFailure: Bool {
+        if case .failed = recorderManager.savePhase { return true }
+        return false
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "text.quote")
+                Text(recorderManager.isRecording ? "Live notes" : "Meeting notes")
+                    .font(.system(size: 12, weight: .semibold))
+                if recorderManager.transcriptionManager.isTranscribing || recorderManager.transcriptionManager.isAnalyzing {
+                    ASCIISpinner(size: 11)
+                }
+                Spacer()
+                Button(action: copyMeetingMemory) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasInsightMemory && !hasTranscriptMemory)
+                .help("Copy meeting memory")
+                Button { recorderManager.transcriptionManager.showPanel = false } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(.white.opacity(0.72))
+            .padding(12)
+
+            Color.white.opacity(0.1).frame(height: 1)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        let insights = recorderManager.transcriptionManager.insights
+                        if !insights.summary.isEmpty {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text(insights.title)
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text(insights.summary)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.72))
+                            }
+                        }
+
+                        if !insights.participants.isEmpty {
+                            Label(insights.participants.joined(separator: ", "), systemImage: "person.2")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+
+                        if !insights.actionItems.isEmpty {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text("Next steps")
+                                    .font(.system(size: 11, weight: .semibold))
+                                ForEach(insights.actionItems) { item in
+                                    HStack(alignment: .top, spacing: 7) {
+                                        Image(systemName: "arrow.turn.down.right")
+                                            .font(.system(size: 8, weight: .semibold))
+                                            .padding(.top, 3)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(item.owner.isEmpty ? item.task : "\(item.owner): \(item.task)")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.white.opacity(0.76))
+                                            if let due = item.dueDate, !due.isEmpty {
+                                                Text(due)
+                                                    .font(.system(size: 9, weight: .medium))
+                                                    .foregroundColor(.white.opacity(0.42))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !insights.decisions.isEmpty {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text("Decisions")
+                                    .font(.system(size: 11, weight: .semibold))
+                                ForEach(insights.decisions, id: \.self) { decision in
+                                    Label(decision, systemImage: "checkmark.circle.fill")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.76))
+                                }
+                            }
+                        }
+
+                        if hasInsightMemory && (hasTranscriptMemory || !recorderManager.transcriptionManager.partialText.isEmpty) {
+                            Color.white.opacity(0.1).frame(height: 1)
+                        }
+
+                        ForEach(recorderManager.transcriptionManager.committedSegments) { segment in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(segment.speakerLabel)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(segment.speakerLabel == "Me" ? .blue : .green)
+                                Text(segment.text)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.82))
+                                    .textSelection(.enabled)
+                            }
+                            .id(segment.id)
+                        }
+
+                        if !recorderManager.transcriptionManager.partialText.isEmpty {
+                            Text(recorderManager.transcriptionManager.partialText)
+                                .font(.system(size: 11))
+                                .italic()
+                                .foregroundColor(.white.opacity(0.45))
+                                .id("partial")
+                        }
+
+                        if !hasVisibleMemory || isSaveFailure {
+                            EmptyMeetingState(recorderManager: recorderManager)
+                        }
+                    }
+                    .padding(14)
+                }
+                .onChange(of: recorderManager.transcriptionManager.committedSegments.count) { _ in
+                    if let last = recorderManager.transcriptionManager.committedSegments.last {
+                        withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(last.id, anchor: .bottom) }
+                    }
+                }
+            }
         }
     }
+
+    private func copyMeetingMemory() {
+        let insights = recorderManager.transcriptionManager.insights
+        var sections: [String] = []
+        if !insights.summary.isEmpty { sections.append("\(insights.title)\n\n\(insights.summary)") }
+        if !insights.participants.isEmpty { sections.append("Participants\n\(insights.participants.joined(separator: ", "))") }
+        if !insights.actionItems.isEmpty {
+            sections.append("Next steps\n" + insights.actionItems.map { "• " + ($0.owner.isEmpty ? $0.task : "\($0.owner): \($0.task)") }.joined(separator: "\n"))
+        }
+        if !insights.decisions.isEmpty { sections.append("Decisions\n" + insights.decisions.map { "• \($0)" }.joined(separator: "\n")) }
+        let transcript = recorderManager.transcriptionManager.fullTranscriptText()
+        if !transcript.isEmpty { sections.append("Transcript\n\(transcript)") }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(sections.joined(separator: "\n\n"), forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+    }
+}
+
+private struct EmptyMeetingState: View {
+    @ObservedObject var recorderManager: RecorderManager
+
+    private var statusText: String {
+        if recorderManager.isProcessing { return recorderManager.savePhase.label }
+        if recorderManager.isStarting { return "Starting recording…" }
+        if recorderManager.isRecording { return "Listening for the conversation…" }
+        switch recorderManager.savePhase {
+        case .complete, .completeWithWarning:
+            return "No speech was detected in this call."
+        case .failed:
+            return "Meeting notes could not be completed."
+        default:
+            return "Meeting notes will appear here."
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if recorderManager.isProcessing || recorderManager.isStarting {
+                ASCIISpinner(size: 18)
+            } else {
+                Image(systemName: "waveform")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(.white.opacity(0.34))
+            }
+            Text(statusText)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white.opacity(0.45))
+                .multilineTextAlignment(.center)
+            if case .failed(let message) = recorderManager.savePhase {
+                Text(message)
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange.opacity(0.9))
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 12) {
+                    if recorderManager.canRetryLastSave {
+                        Button("Retry") { recorderManager.retryLastSave() }
+                    }
+                }
+                .font(.system(size: 10, weight: .medium))
+                .buttonStyle(.plain)
+                .foregroundColor(.white.opacity(0.75))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 38)
+    }
+}
+
+@MainActor
+private func preferenceBinding(_ manager: RecorderManager, _ path: WritableKeyPath<CallPreferences, Bool>) -> Binding<Bool> {
+    Binding(
+        get: { manager.currentCallPreferences[keyPath: path] },
+        set: { manager.setActiveCallPreference(path, to: $0) }
+    )
+}
+
+private func formatDuration(_ seconds: TimeInterval) -> String {
+    let total = Int(seconds)
+    let hours = total / 3600
+    let minutes = (total % 3600) / 60
+    let remainder = total % 60
+    return hours > 0
+        ? String(format: "%d:%02d:%02d", hours, minutes, remainder)
+        : String(format: "%02d:%02d", minutes, remainder)
 }

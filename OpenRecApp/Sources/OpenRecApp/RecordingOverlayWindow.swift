@@ -28,6 +28,7 @@ final class RecordingOverlayWindow {
         overlay.hasShadow = false
         overlay.ignoresMouseEvents = true
         overlay.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        overlay.sharingType = .readOnly
 
         let view = RecordingOverlayView(
             frame: overlay.contentView?.bounds ?? screen.frame,

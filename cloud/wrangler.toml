@@ -1,0 +1,15 @@
+name = "openrec-cloud"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+[vars]
+PUBLIC_BASE_URL = "https://openrec-cloud.qstar0.workers.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "openrec"
+database_id = "611a5823-7434-4a89-9e08-0a03f1b3ed43"
+
+[[r2_buckets]]
+binding = "RECORDINGS"
+bucket_name = "openrec-recordings"

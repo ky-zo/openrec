@@ -2,27 +2,37 @@ import AppKit
 import SwiftUI
 import Combine
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var recorderManager: RecorderManager!
     private var controlWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
+    private var recordingsWindow: NSWindow?
+    private var settingsWindow: NSWindow?
+    private let recordingsNavigation = RecordingLibraryNavigation()
+    private let callDetector = CallDetectionManager()
+    private let callDetectionWindow = CallDetectionWindow()
     private let windowState = WindowState()
     private let mainWidth: CGFloat = 240
-    private let transcriptWidth: CGFloat = 281 // 280 + 1 for divider
-    private let expandedHeight: CGFloat = 400
-    private let recordingHeight: CGFloat = 76 // header + compact controls row
-    private let recordingExpandedHeight: CGFloat = 140 // slightly taller when transcript panel open
+    private let transcriptWidth: CGFloat = 281
+    // Keep the idle panel compact: this leaves deliberate breathing room
+    // between the record action and call controls without a large dead zone.
+    private let expandedHeight: CGFloat = 360
+    private let recordingHeight: CGFloat = 76
+    private let recordingExpandedHeight: CGFloat = 320
     private let collapsedHeight: CGFloat = 86
     private var pendingTerminate = false
     private var updatePromptedThisSession = false
     private var cancellables = Set<AnyCancellable>()
     private var resizeWorkItem: DispatchWorkItem?
+    private var callDetectorStarted = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         recorderManager = RecorderManager()
 
         // Create status item
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem.button {
             updateStatusIcon(isRecording: false)
@@ -35,21 +45,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.updateStatusIcon(isRecording: isRecording)
+                if isRecording {
+                    self.callDetectionWindow.hide()
+                    self.settingsWindow?.orderOut(nil)
+                }
                 // Don't auto-show transcript panel — user controls it via expand button
                 self.recalculateWindowSize(animated: true)
             }
         }
         recorderManager.onProcessingComplete = { [weak self] in
             guard let self else { return }
+            if case .failed = self.recorderManager.savePhase {
+                self.windowState.isCollapsed = false
+                self.showRecorderWindow()
+            }
             self.finishPendingTerminationIfNeeded()
         }
 
-        // Show transcript panel when post-recording transcription starts
+        // Keep post-call progress and results visible.
         recorderManager.transcriptionManager.$isTranscribing
             .removeDuplicates()
             .sink { [weak self] isTranscribing in
                 guard let self else { return }
-                if isTranscribing && self.recorderManager.transcriptionManager.mode == .postRecording {
+                if isTranscribing && !self.recorderManager.isRecording {
                     self.recorderManager.transcriptionManager.showPanel = true
                 }
                 DispatchQueue.main.async {
@@ -76,6 +94,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        recorderManager.$callDetectionEnabled
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                guard let self, OpenRecOnboarding.isComplete else { return }
+                if enabled { self.startCallDetectionIfNeeded() }
+                else { self.stopCallDetection() }
+            }
+            .store(in: &cancellables)
+
+        recorderManager.$isStarting
+            .removeDuplicates()
+            .filter { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.settingsWindow?.orderOut(nil) }
+            .store(in: &cancellables)
+
         windowState.onCollapseChange = { [weak self] _ in
             // Collapse is user-initiated — skip debounce for instant response
             self?.performResize(animated: true)
@@ -84,18 +119,64 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupEditMenu()
         setupControlWindow()
 
+        callDetector.isRecording = { [weak self] in self?.recorderManager.isRecording == true }
+        callDetector.onCallDetected = { [weak self] call in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let calendar = try? await self.recorderManager.cloudStorage.currentCalendarCall()
+                let calendarParticipants = calendar?.participants ?? []
+                let enriched = DetectedCall(
+                    appName: call.appName,
+                    title: call.title ?? calendar?.title,
+                    participants: calendarParticipants.isEmpty ? call.participants : calendarParticipants
+                )
+                self.callDetectionWindow.show(call: enriched, onStart: { [weak self] in
+                    guard let self else { return }
+                    self.recorderManager.detectedCall = enriched
+                    self.showControlWindow()
+                    Task { await self.recorderManager.startRecording() }
+                }, onDismiss: { [weak self] in
+                    self?.callDetector.snooze()
+                })
+            }
+        }
+        if OpenRecOnboarding.isComplete {
+            startCallDetectionIfNeeded()
+        }
+
         checkForUpdatesOnLaunch()
 
-        // Show the control window on launch after the status item is ready.
+        // First launch is a focused setup flow. The compact recorder only
+        // appears after every required service and permission is ready.
         DispatchQueue.main.async {
-            self.showControlWindow()
+            if OpenRecOnboarding.isComplete {
+                self.showControlWindow()
+            } else {
+                self.showOnboarding(isSettings: false)
+            }
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        callDetector.stop()
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        showControlWindow()
+        return false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if recorderManager.isStarting {
+            pendingTerminate = true
+            recorderManager.cancelStartingRecordingForTermination()
+            return .terminateLater
+        }
+
         if recorderManager.isRecording {
             pendingTerminate = true
             recorderManager.stopRecording()
@@ -113,16 +194,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusIcon(isRecording: Bool) {
         guard let button = statusItem.button else { return }
 
-        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-        let symbolName = isRecording ? "record.circle.fill" : "record.circle"
-        let description = isRecording ? "Recording" : "OpenRec"
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)
-        image?.isTemplate = true
-        button.image = image?.withSymbolConfiguration(config)
+        let description = isRecording ? "OpenRec is recording" : "OpenRec"
+        button.image = OpenRecBrandIcon.statusItemImage(
+            accessibilityDescription: description
+        )
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
         button.contentTintColor = isRecording ? .systemRed : nil
+        button.toolTip = description
+        button.setAccessibilityLabel(description)
     }
 
     @objc private func showControlWindow() {
+        guard OpenRecOnboarding.isComplete else {
+            showOnboarding(isSettings: false)
+            return
+        }
+        showRecorderWindow()
+    }
+
+    private func showRecorderWindow() {
         guard let window = controlWindow else { return }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -149,13 +240,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.hasShadow = true
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
 
-        // Hide from screen sharing and screen recording
-        window.sharingType = .none
+        // Keep the recorder visible to normal macOS screenshots. The app's
+        // own ScreenCaptureKit stream excludes OpenRec windows explicitly, so
+        // this does not burn the controls into call recordings.
+        window.sharingType = .readOnly
 
         window.contentView = NSHostingView(
             rootView: FloatingPanelView(
                 recorderManager: recorderManager,
-                windowState: windowState
+                windowState: windowState,
+                onOpenSettings: { [weak self] in
+                    self?.showSettingsWindow()
+                },
+                onOpenLibrary: { [weak self] in
+                    self?.showRecordingsLibrary()
+                }
             )
         )
 
@@ -163,6 +262,160 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         window.center()
         controlWindow = window
+    }
+
+    private func showOnboarding(isSettings: Bool) {
+        if let window = onboardingWindow {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        if !isSettings {
+            controlWindow?.orderOut(nil)
+        }
+
+        let size = NSSize(width: 520, height: 600)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = isSettings ? "OpenRec Settings" : "Welcome to OpenRec"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false
+        window.level = .floating
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = true
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        // The setup window can be shared for support; secrets remain secure
+        // fields and Settings cannot be opened during a recording. The
+        // recorder window itself stays excluded from captured calls.
+        window.sharingType = .readOnly
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = false
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.standardWindowButton(.closeButton)?.isHidden = false
+
+        let hostingView = NSHostingView(
+            rootView: OpenRecOnboardingView(
+                recorderManager: recorderManager,
+                isSettings: isSettings,
+                onFinish: { [weak self, weak window] in
+                    guard let self else { return }
+                    OpenRecOnboarding.markComplete()
+                    window?.orderOut(nil)
+                    self.onboardingWindow = nil
+                    self.startCallDetectionIfNeeded()
+                    self.showRecorderWindow()
+                }
+            )
+        )
+        hostingView.sizingOptions = []
+        hostingView.frame = NSRect(origin: .zero, size: size)
+        hostingView.autoresizingMask = [.width, .height]
+        window.contentView = hostingView
+        window.setContentSize(size)
+        window.contentMinSize = size
+        window.contentMaxSize = size
+
+        window.center()
+        onboardingWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func startCallDetectionIfNeeded() {
+        guard recorderManager.callDetectionEnabled, !callDetectorStarted else { return }
+        callDetectorStarted = true
+        callDetector.start()
+    }
+
+    private func stopCallDetection() {
+        callDetector.stop()
+        callDetectionWindow.hide()
+        callDetectorStarted = false
+    }
+
+    @objc private func showRecordingsLibrary() {
+        if let meetingID = recorderManager.lastSavedMeetingID {
+            // A selection request carries a fresh token, so clicking “View meeting”
+            // selects the saved call even when the library window already exists
+            // and the user previously browsed to a different meeting.
+            recordingsNavigation.select(meetingID)
+        }
+        if let window = recordingsWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            Task { await recorderManager.cloudStorage.refreshLibrary() }
+            return
+        }
+
+        let size = NSSize(width: 980, height: 680)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "OpenRec Meetings"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = false
+        window.isReleasedWhenClosed = false
+        window.backgroundColor = NSColor(calibratedWhite: 0.1, alpha: 1)
+        window.minSize = NSSize(width: 860, height: 580)
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        // Meeting details should remain available in screenshots for sharing
+        // and support. Secure credentials only live in SecureFields elsewhere.
+        window.sharingType = .readOnly
+        window.contentView = NSHostingView(
+            rootView: RecordingLibraryView(
+                recorderManager: recorderManager,
+                navigation: recordingsNavigation
+            )
+        )
+        window.center()
+        recordingsWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func showSettingsWindow() {
+        guard !recorderManager.isRecording, !recorderManager.isProcessing else { return }
+        if let window = settingsWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let size = NSSize(width: 760, height: 560)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "OpenRec Settings"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.backgroundColor = NSColor(calibratedWhite: 0.1, alpha: 1)
+        window.minSize = NSSize(width: 720, height: 520)
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        window.sharingType = .readOnly
+        window.contentView = NSHostingView(rootView: OpenRecSettingsView(recorderManager: recorderManager))
+        window.center()
+        settingsWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// Single method that computes window size from all relevant state.
@@ -186,28 +439,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let collapsed = windowState.isCollapsed
 
         let (targetWidth, targetHeight) = MainActor.assumeIsolated { () -> (CGFloat, CGFloat) in
-            let tm = recorderManager.transcriptionManager
             let isRecording = recorderManager.isRecording
 
-            // Right panel: during recording, user-controlled; otherwise auto when mode != .off
-            let showingRightPanel = !collapsed && tm.mode != .off && (isRecording ? tm.showPanel : true)
-
-            // Tips show independently of right panel during recording
-            let showingTips: Bool = {
-                if collapsed { return false }
-                if !tm.hasOpenRouterKey { return false }
-                if isRecording && tm.mode == .live && tm.hasAPIKey { return true }
-                if tm.isTranscribing { return true }
-                if tm.showPanel && !tm.committedSegments.isEmpty { return true }
-                return false
-            }()
-
-            let currentTipsHeight: CGFloat
-            if showingTips {
-                currentTipsHeight = isRecording ? 201 : 141 // content + 1px divider
-            } else {
-                currentTipsHeight = 0
-            }
+            let showingRightPanel = !collapsed && recorderManager.transcriptionManager.showPanel
 
             let baseHeight: CGFloat
             if isRecording {
@@ -216,7 +450,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 baseHeight = expandedHeight
             }
             let w = mainWidth + (showingRightPanel ? transcriptWidth : 0)
-            let h = collapsed ? collapsedHeight : baseHeight + currentTipsHeight
+            let h = collapsed ? collapsedHeight : baseHeight
             return (w, h)
         }
 
@@ -253,6 +487,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "About OpenRec", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let settings = appMenu.addItem(withTitle: "Settings…", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
+        settings.target = self
+        let meetings = appMenu.addItem(withTitle: "Meetings…", action: #selector(showRecordingsLibrary), keyEquivalent: "m")
+        meetings.target = self
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit OpenRec", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
@@ -270,6 +511,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(editMenuItem)
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func openSettingsFromMenu() {
+        showSettingsWindow()
     }
 
     private func configureTrafficLights(for window: NSWindow) {
