@@ -511,10 +511,6 @@ export default function Page() {
           </p>
         </section>
 
-        <section className="showcase-section">
-          <AppMockup />
-        </section>
-
         <section className="features" id="features">
           <div className="section-head">
             <h3>Everything it does</h3>
