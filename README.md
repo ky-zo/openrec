@@ -4,7 +4,7 @@ An open-source macOS call recorder and meeting memory tool. OpenRec captures scr
 
 ## Download
 
-**[Download Latest Release](https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg)**
+**[Download Latest Release](https://api.amore.computer/v1/apps/app.openrec.mac/download)**
 
 The app is signed and notarized by Apple.
 
@@ -31,7 +31,7 @@ The app is signed and notarized by Apple.
 
 ## Installation
 
-1. Download [OpenRec.dmg](https://github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg)
+1. Download [OpenRec.dmg](https://api.amore.computer/v1/apps/app.openrec.mac/download)
 2. Open the DMG and drag OpenRec to Applications
 3. Launch OpenRec
 

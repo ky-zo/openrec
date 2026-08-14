@@ -92,10 +92,10 @@ It exists because these exact mistakes have already been made once.
   tag with the DMG attached under the asset name **exactly `OpenRec.dmg`**
   (`gh release create vX.Y.Z path/to/OpenRec.dmg …` — note that gh's
   `file#Label` syntax sets a display label, NOT the asset name; the file on
-  disk must literally be named `OpenRec.dmg`). Two things depend on this:
-  the landing page's download button
-  (`github.com/ky-zo/openrec/releases/latest/download/OpenRec.dmg`) and the
-  legacy in-app updater on pre-0.3.1 installs.
+  disk must literally be named `OpenRec.dmg`). Amore is the source of truth:
+  the landing page downloads from
+  `api.amore.computer/v1/apps/app.openrec.mac/download`, while the GitHub
+  asset remains available for the legacy updater fallback on older installs.
 - The legacy Sparkle path (`release.sh` → tag → `build-app.sh` →
   `appcast.xml`) still exists; don't mix the two in one release. If a release
   goes out via Amore, the tag/commit should still be created so dist matches a

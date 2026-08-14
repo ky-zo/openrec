@@ -1,11 +1,11 @@
 "use client";
 
-import { Dithering } from "@paper-design/shaders-react";
+import { MeshGradient } from "@paper-design/shaders-react";
 import { useEffect, useState } from "react";
 
 const REPO = "ky-zo/openrec";
 const REPO_URL = `https://github.com/${REPO}`;
-const DMG_URL = `${REPO_URL}/releases/latest/download/OpenRec.dmg`;
+const DMG_URL = "https://api.amore.computer/v1/apps/app.openrec.mac/download";
 
 /* -------------------------------------------------------------------------- */
 /*  Icons                                                                      */
@@ -52,6 +52,89 @@ function StarIcon({ className }: { className?: string }) {
       aria-hidden="true"
     >
       <path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-7.416-3.967-7.417 3.967 1.481-8.279-6.064-5.828 8.332-1.151z" />
+    </svg>
+  );
+}
+
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.2 14.5-4-4 1.4-1.4 2.6 2.6 5.6-5.6L17.8 9.5l-7 7z" />
+    </svg>
+  );
+}
+
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <line x1="16.5" y1="16.5" x2="21" y2="21" />
+    </svg>
+  );
+}
+
+function MicIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <line x1="12" y1="18" x2="12" y2="22" />
+    </svg>
+  );
+}
+
+function ChevronUpDownIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <polyline points="8,9 12,5 16,9" />
+      <polyline points="8,15 12,19 16,15" />
+    </svg>
+  );
+}
+
+function CopyIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="9" y="9" width="12" height="12" rx="2.5" />
+      <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
     </svg>
   );
 }
@@ -104,6 +187,199 @@ function Waveform() {
             }}
           />
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  App mockup                                                                 */
+/* -------------------------------------------------------------------------- */
+
+const MEETINGS = [
+  {
+    title: "Acme — pricing review",
+    meta: "Today, 14:20 · 42:18 · Google Meet",
+    active: true,
+  },
+  { title: "Design sync", meta: "Today, 10:05 · 28:44 · Zoom" },
+  { title: "Onboarding call — Northwind", meta: "Yesterday · 51:02 · Teams" },
+  { title: "Weekly standup", meta: "Yesterday · 14:37 · Slack Huddle" },
+  { title: "Investor update", meta: "Mon · 33:51 · Zoom" },
+];
+
+const NEXT_STEPS = [
+  {
+    task: "Send the revised pricing sheet with the volume tier",
+    meta: "Kamil · Thursday",
+  },
+  {
+    task: "Set up a shared R2 bucket for their recordings",
+    meta: "Kamil · this week",
+  },
+  { task: "Confirm the security review timeline with legal", meta: "Dana" },
+];
+
+const DECISIONS = [
+  "Move to annual billing starting next quarter",
+  "Keep the pilot scoped to the support team for now",
+];
+
+function AppMockup() {
+  const levels = [0.35, 0.62, 0.88, 0.71, 0.94, 0.66, 0.83, 0.48, 0.29];
+
+  return (
+    <div
+      className="showcase"
+      role="img"
+      aria-label="The OpenRec meetings window on macOS, showing a call's participants, summary, next steps, and decisions, with the menu bar recorder panel floating over it."
+    >
+      <div className="app-window">
+        <div className="titlebar">
+          <span className="traffic">
+            <i className="tl tl-red" />
+            <i className="tl tl-yellow" />
+            <i className="tl tl-green" />
+          </span>
+          <span className="titlebar-title">OpenRec</span>
+        </div>
+
+        <div className="app-body">
+          <aside className="app-sidebar">
+            <div className="sidebar-head">
+              <span className="accent-dot" />
+              <span className="sidebar-title">Meetings</span>
+              <span className="sidebar-count">128</span>
+            </div>
+
+            <div className="search-field">
+              <SearchIcon className="icon-11" />
+              <span className="search-placeholder">Search meetings</span>
+            </div>
+
+            <ul className="meeting-list">
+              {MEETINGS.map((m) => (
+                <li
+                  key={m.title}
+                  className={m.active ? "meeting-row is-active" : "meeting-row"}
+                >
+                  <span className="meeting-title">{m.title}</span>
+                  <span className="meeting-meta">{m.meta}</span>
+                </li>
+              ))}
+            </ul>
+          </aside>
+
+          <section className="app-detail">
+            <header className="detail-head">
+              <div>
+                <h3 className="detail-title">Acme — pricing review</h3>
+                <p className="detail-meta">
+                  Today, 14:20 · 42:18 · Google Meet
+                </p>
+              </div>
+              <span className="ghost-btn">
+                <CopyIcon className="icon-12" />
+                Copy
+              </span>
+            </header>
+
+            <div className="detail-scroll">
+              <div className="detail-section">
+                <div className="section-label">Participants</div>
+                <div className="pills">
+                  {["Kamil", "Dana Whitfield", "Marcus Lee", "Priya N."].map(
+                    (p) => (
+                      <span key={p} className="pill">
+                        {p}
+                      </span>
+                    ),
+                  )}
+                </div>
+              </div>
+
+              <div className="detail-section">
+                <div className="section-label">Summary</div>
+                <p className="section-body">
+                  Acme walked through their current seat count and pushed back
+                  on the per-seat price at the 200+ tier. We agreed to move them
+                  to annual billing next quarter in exchange for a volume
+                  discount, and to keep the pilot scoped to the support team
+                  until the security review clears.
+                </p>
+              </div>
+
+              <div className="detail-section">
+                <div className="section-label">Next steps</div>
+                <ul className="steps">
+                  {NEXT_STEPS.map((s) => (
+                    <li key={s.task}>
+                      <span className="step-dot" />
+                      <span>
+                        <span className="step-task">{s.task}</span>
+                        <span className="step-meta">{s.meta}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="detail-section">
+                <div className="section-label">Decisions</div>
+                <ul className="decisions">
+                  {DECISIONS.map((d) => (
+                    <li key={d}>
+                      <CheckIcon className="icon-13 check" />
+                      {d}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      {/* Menu bar recorder panel */}
+      <div className="recorder-panel">
+        <div className="panel-top">
+          <div className="record-btn">
+            <span className="record-stop" />
+          </div>
+          <div className="panel-timer">12:47</div>
+          <div className="panel-levels">
+            {levels.map((l, i) => (
+              <span
+                key={`level-${l}`}
+                className="level-bar"
+                style={{
+                  height: `${Math.round(l * 20)}px`,
+                  animationDelay: `${i * 0.09}s`,
+                }}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="panel-rows">
+          <div className="panel-row">
+            <MicIcon className="icon-11 dim" />
+            <span className="row-text">MacBook Pro Microphone</span>
+            <ChevronUpDownIcon className="icon-9 dim" />
+          </div>
+
+          <div className="panel-row panel-row--toggle">
+            <span className="row-text">Show red border</span>
+            <span className="switch">
+              <span className="knob" />
+            </span>
+          </div>
+
+          <div className="segmented">
+            <span className="seg is-active">Live</span>
+            <span className="seg">After</span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -180,26 +456,19 @@ export default function Page() {
   return (
     <div className="landing-page">
       <div className="shader-background" aria-hidden="true">
-        <Dithering
+        <MeshGradient
           width={1280}
           height={720}
-          colorBack="#301c2a"
-          colorFront="#00ff95"
-          shape="warp"
-          type="4x4"
-          size={1}
-          speed={0.26}
-          scale={0.72}
-          rotation={24}
-          offsetX={-0.3}
-          offsetY={0.36}
+          colors={["#000000", "#000000", "#000000", "#750000"]}
+          distortion={1}
+          swirl={0.1}
+          grainMixer={0}
+          grainOverlay={0}
+          speed={1}
           className="shader-canvas"
           style={{ width: "100%", height: "100%" }}
         />
       </div>
-
-      <div className="gradient-orb orb-1" />
-      <div className="gradient-orb orb-2" />
 
       <header className="top-bar">
         <a className="logo" href="#top">
@@ -253,6 +522,10 @@ export default function Page() {
             Requires macOS 15 or later · Signed and notarized by Apple
             {version ? ` · ${version}` : ""}
           </p>
+        </section>
+
+        <section className="showcase-section">
+          <AppMockup />
         </section>
 
         <section className="features" id="features">
