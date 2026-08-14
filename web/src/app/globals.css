@@ -56,23 +56,15 @@ body {
 }
 
 .shader-background {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: min(1000px, 100dvh);
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
   overflow: hidden;
   pointer-events: none;
   z-index: 0;
   opacity: 0;
   animation: backdropIn 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  mask-image: linear-gradient(to bottom, black 0%, black 62%, transparent 100%);
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    black 0%,
-    black 62%,
-    transparent 100%
-  );
 }
 
 .shader-canvas {
@@ -84,9 +76,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(to bottom, rgba(10, 10, 10, 0.18), rgba(10, 10, 10, 0.68)),
-    radial-gradient(circle at center, transparent 20%, rgba(10, 10, 10, 0.45));
+  background: rgba(10, 10, 10, 0.42);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -597,10 +587,6 @@ h2 {
 }
 
 @media (max-width: 720px) {
-  .shader-background {
-    height: 820px;
-  }
-
   .hero {
     min-height: 820px;
     padding-top: 7.5rem;
