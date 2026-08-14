@@ -876,6 +876,125 @@ h2 {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Ownership                                                                  */
+/* -------------------------------------------------------------------------- */
+
+.ownership {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.72fr) minmax(0, 2fr);
+  gap: clamp(2.5rem, 7vw, 6rem);
+  padding: 8.5rem 0 0;
+}
+
+.ownership-intro {
+  align-self: start;
+  position: sticky;
+  top: 7rem;
+}
+
+.ownership-kicker {
+  margin-bottom: 0.75rem;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.ownership-intro h3 {
+  max-width: 10ch;
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+}
+
+.ownership-list {
+  border-top: 1px solid var(--border);
+}
+
+.ownership-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  gap: clamp(1rem, 3vw, 2rem);
+  align-items: start;
+  min-height: 8.5rem;
+  padding: 1.7rem 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.ownership-number {
+  padding-top: 0.18rem;
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.ownership-item h4 {
+  margin-bottom: 0.45rem;
+  font-size: 1rem;
+  font-weight: 620;
+  letter-spacing: -0.015em;
+}
+
+.ownership-item p {
+  max-width: 34rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.ownership-amore {
+  grid-template-columns: 2.65rem minmax(0, 1fr) auto;
+  transition: color 220ms ease;
+}
+
+.ownership-amore::before {
+  position: absolute;
+  inset: 0 -1rem;
+  z-index: -1;
+  content: "";
+  background: rgba(255, 255, 255, 0.045);
+  opacity: 0;
+  transform: scaleY(0.92);
+  transition:
+    opacity 220ms ease,
+    transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ownership-amore:hover::before,
+.ownership-amore:focus-visible::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.ownership-amore img {
+  display: block;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+}
+
+.ownership-arrow {
+  padding-top: 0.1rem;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 1.15rem;
+  transition:
+    color 220ms ease,
+    transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ownership-amore:hover .ownership-arrow,
+.ownership-amore:focus-visible .ownership-arrow {
+  color: var(--text);
+  transform: translate(2px, -2px);
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Features                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -1035,6 +1154,19 @@ h2 {
 }
 
 @media (max-width: 900px) {
+  .ownership {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .ownership-intro {
+    position: static;
+  }
+
+  .ownership-intro h3 {
+    max-width: none;
+  }
+
   .feature-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -1087,6 +1219,10 @@ h2 {
     padding-top: 6rem;
   }
 
+  .ownership {
+    padding-top: 6rem;
+  }
+
   .top-nav a:not(:last-child) {
     display: none;
   }
@@ -1099,6 +1235,15 @@ h2 {
 }
 
 @media (max-width: 600px) {
+  .ownership-item {
+    grid-template-columns: 1.6rem minmax(0, 1fr);
+    gap: 0.85rem;
+  }
+
+  .ownership-amore {
+    grid-template-columns: 2.65rem minmax(0, 1fr) auto;
+  }
+
   .buttons {
     flex-direction: column;
     align-items: center;

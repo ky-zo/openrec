@@ -528,6 +528,71 @@ export default function Page() {
           <AppMockup />
         </section>
 
+        <section className="ownership" aria-labelledby="ownership-title">
+          <div className="ownership-intro">
+            <p className="ownership-kicker">Your stack, your rules</p>
+            <h3 id="ownership-title">OpenRec stays yours.</h3>
+          </div>
+
+          <div className="ownership-list">
+            <article className="ownership-item">
+              <span className="ownership-number">01</span>
+              <div>
+                <h4>Your own cloud</h4>
+                <p>
+                  Use OpenRec Cloud, or point the app at your own Cloudflare R2
+                  storage.
+                </p>
+              </div>
+            </article>
+
+            <article className="ownership-item">
+              <span className="ownership-number">02</span>
+              <div>
+                <h4>Bring your own AI keys</h4>
+                <p>
+                  Connect your own AssemblyAI and OpenAI API keys. They stay in
+                  the macOS Keychain.
+                </p>
+              </div>
+            </article>
+
+            <article className="ownership-item">
+              <span className="ownership-number">03</span>
+              <div>
+                <h4>Open source</h4>
+                <p>
+                  The Mac app, cloud worker, and website are MIT licensed and
+                  open for inspection.
+                </p>
+              </div>
+            </article>
+
+            <a
+              className="ownership-item ownership-amore"
+              href="https://amore.computer/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <img
+                src="https://amore.computer/assets/icon.webp"
+                alt="Amore logo"
+                width="42"
+                height="42"
+                loading="lazy"
+                decoding="async"
+              />
+              <div>
+                <h4>Built with Amore</h4>
+                <p>Signed, notarized, packaged, and updated through Amore.</p>
+              </div>
+              <span className="ownership-arrow" aria-hidden="true">
+                ↗
+              </span>
+            </a>
+          </div>
+        </section>
+
         <section className="features" id="features">
           <div className="section-head">
             <h3>Everything it does</h3>
