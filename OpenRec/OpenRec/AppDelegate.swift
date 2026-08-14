@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 import Combine
+#if canImport(Sparkle)
+import Sparkle
+#endif
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -24,13 +27,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let recordingExpandedHeight: CGFloat = 320
     private let collapsedHeight: CGFloat = 86
     private var pendingTerminate = false
-    private var updatePromptedThisSession = false
     private var cancellables = Set<AnyCancellable>()
     private var resizeWorkItem: DispatchWorkItem?
     private var callDetectorStarted = false
+#if canImport(Sparkle)
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+#endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         recorderManager = RecorderManager()
+#if canImport(Sparkle)
+        recorderManager.onInstallReadyUpdate = { [weak self] in
+            self?.updaterController.checkForUpdates(nil)
+        }
+#endif
 
         // Create status item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

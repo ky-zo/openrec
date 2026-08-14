@@ -17,6 +17,7 @@ const description =
   "Open source macOS call recorder. Captures screen, system audio, and mic without adding a bot to the meeting, then gives you a transcript, summary, decisions, and next steps.";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://openrec.co"),
   title,
   description,
   applicationName: "OpenRec",

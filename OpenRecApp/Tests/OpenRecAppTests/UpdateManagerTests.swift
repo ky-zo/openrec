@@ -27,4 +27,40 @@ final class UpdateManagerTests: XCTestCase {
         XCTAssertTrue(current < newer)
         XCTAssertFalse(newer < same)
     }
+
+    func testManagedUpdateInstallerReplacesManualDMGFlow() {
+        let dmgURL = URL(fileURLWithPath: "/tmp/OpenRec.dmg")
+        var managedInstallCount = 0
+        var openedURLs: [URL] = []
+        var terminateCount = 0
+
+        let usedManagedInstaller = ReadyUpdateInstallation.perform(
+            managedInstaller: { managedInstallCount += 1 },
+            dmgURL: dmgURL,
+            openDMG: { openedURLs.append($0) },
+            terminate: { terminateCount += 1 }
+        )
+
+        XCTAssertTrue(usedManagedInstaller)
+        XCTAssertEqual(managedInstallCount, 1)
+        XCTAssertTrue(openedURLs.isEmpty)
+        XCTAssertEqual(terminateCount, 0)
+    }
+
+    func testLegacyUpdateInstallerStillOpensDMGAndTerminates() {
+        let dmgURL = URL(fileURLWithPath: "/tmp/OpenRec.dmg")
+        var openedURLs: [URL] = []
+        var terminateCount = 0
+
+        let usedManagedInstaller = ReadyUpdateInstallation.perform(
+            managedInstaller: nil,
+            dmgURL: dmgURL,
+            openDMG: { openedURLs.append($0) },
+            terminate: { terminateCount += 1 }
+        )
+
+        XCTAssertFalse(usedManagedInstaller)
+        XCTAssertEqual(openedURLs, [dmgURL])
+        XCTAssertEqual(terminateCount, 1)
+    }
 }

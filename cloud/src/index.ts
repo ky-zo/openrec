@@ -209,10 +209,11 @@ async function startGoogle(url: URL, env: Env): Promise<Response> {
   google.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
   google.searchParams.set("redirect_uri", `${env.PUBLIC_BASE_URL}/v1/auth/google/callback`);
   google.searchParams.set("response_type", "code");
-  google.searchParams.set("scope", "openid email profile https://www.googleapis.com/auth/calendar.readonly");
+  // Identity owns the meeting library. Calendar access is a separate,
+  // additive grant started by createCalendarConnectSession below.
+  google.searchParams.set("scope", "openid email profile");
   google.searchParams.set("state", state);
-  google.searchParams.set("access_type", "offline");
-  google.searchParams.set("prompt", "consent select_account");
+  google.searchParams.set("prompt", "select_account");
   return Response.redirect(google.toString(), 302);
 }
 
@@ -267,9 +268,12 @@ async function disconnectCalendar(url: URL, env: Env, user: { id: string }): Pro
   } else {
     await env.DB.prepare("DELETE FROM calendar_connections WHERE user_id = ?").bind(user.id).run();
   }
-  // Clear the legacy single-connection columns either way.
+  // Clear both generations of legacy calendar credentials. Before dedicated
+  // calendar connections, sign-in stored its calendar-capable refresh token in
+  // google_refresh_token_cipher, which the read path still supports as a
+  // fallback for older accounts.
   await env.DB.prepare(
-    "UPDATE users SET google_calendar_refresh_token_cipher = NULL, google_calendar_email = NULL, updated_at = ? WHERE id = ?"
+    "UPDATE users SET google_refresh_token_cipher = NULL, google_calendar_refresh_token_cipher = NULL, google_calendar_email = NULL, updated_at = ? WHERE id = ?"
   ).bind(new Date().toISOString(), user.id).run();
   return json({ ok: true });
 }

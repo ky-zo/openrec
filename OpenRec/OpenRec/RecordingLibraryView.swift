@@ -25,6 +25,75 @@ enum MeetingLibraryPresentation {
     }
 }
 
+enum AppVersionPresentation {
+    static var current: String {
+        label(infoDictionary: Bundle.main.infoDictionary ?? [:])
+    }
+
+    static func label(infoDictionary: [String: Any]) -> String {
+        let version = (infoDictionary["CFBundleShortVersionString"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let build = (infoDictionary["CFBundleVersion"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch (version?.isEmpty == false ? version : nil, build?.isEmpty == false ? build : nil) {
+        case let (version?, build?): return "v\(version) (\(build))"
+        case let (version?, nil): return "v\(version)"
+        case let (nil, build?): return "build \(build)"
+        case (nil, nil): return "dev build"
+        }
+    }
+}
+
+enum MeetingClipboardText {
+    static func participants(for meeting: MeetingRecord) -> String? {
+        nonEmpty(meeting.insights.participants.joined(separator: ", "))
+    }
+
+    static func summary(for meeting: MeetingRecord) -> String? {
+        nonEmpty(meeting.insights.summary)
+    }
+
+    static func aiNotes(for meeting: MeetingRecord) -> String? {
+        nonEmpty(meeting.insights.aiNotes)
+    }
+
+    static func nextSteps(for meeting: MeetingRecord) -> String? {
+        guard !meeting.insights.actionItems.isEmpty else { return nil }
+        return meeting.insights.actionItems.map { item in
+            let owner = item.owner.trimmingCharacters(in: .whitespacesAndNewlines)
+            var line = owner.isEmpty ? item.task : "\(owner): \(item.task)"
+            if let dueDate = nonEmpty(item.dueDate ?? "") { line += " — \(dueDate)" }
+            return "• \(line)"
+        }.joined(separator: "\n")
+    }
+
+    static func decisions(for meeting: MeetingRecord) -> String? {
+        guard !meeting.insights.decisions.isEmpty else { return nil }
+        return meeting.insights.decisions.map { "• \($0)" }.joined(separator: "\n")
+    }
+
+    static func transcript(for meeting: MeetingRecord) -> String? {
+        nonEmpty(meeting.transcript ?? "")
+    }
+
+    static func meeting(_ meeting: MeetingRecord) -> String {
+        var sections = [meeting.title]
+        if let participants = participants(for: meeting) { sections.append("Participants\n\(participants)") }
+        if let summary = summary(for: meeting) { sections.append("Summary\n\(summary)") }
+        if let aiNotes = aiNotes(for: meeting) { sections.append("AI Notes\n\(aiNotes)") }
+        if let nextSteps = nextSteps(for: meeting) { sections.append("Next steps\n\(nextSteps)") }
+        if let decisions = decisions(for: meeting) { sections.append("Decisions\n\(decisions)") }
+        if let transcript = transcript(for: meeting) { sections.append("Transcript\n\(transcript)") }
+        return sections.joined(separator: "\n\n")
+    }
+
+    private static func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 private enum MeetingDetailTab: String, CaseIterable, Identifiable {
     case summary = "AI Notes"
     case transcript = "Transcript"
@@ -84,6 +153,7 @@ struct RecordingLibraryView: View {
     private let primary = Color.white.opacity(0.92)
     private let secondary = Color.white.opacity(0.58)
     private let accent = Color(red: 1, green: 0.25, blue: 0.28)
+    private let calendarRefreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     private var visibleMeetings: [MeetingRecord] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -155,6 +225,12 @@ struct RecordingLibraryView: View {
         }
         .onChange(of: recorderManager.cloudStorage.isManagedSignedIn) { _ in
             recorderManager.refreshUpcomingEvents()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if tab == .comingUp { recorderManager.refreshUpcomingEvents() }
+        }
+        .onReceive(calendarRefreshTimer) { _ in
+            if tab == .comingUp { recorderManager.refreshUpcomingEvents() }
         }
         .onChange(of: recorderManager.cloudStorage.libraryMeetings) { _ in
             selectInitialMeeting()
@@ -265,6 +341,8 @@ struct RecordingLibraryView: View {
             HStack(spacing: 6) {
                 Image(systemName: recorderManager.cloudStorage.mode == .managed ? "icloud" : "shippingbox")
                 Text(recorderManager.cloudStorage.mode.label)
+                Text("•")
+                Text(AppVersionPresentation.current)
                 Spacer()
                 Text(
                     tab == .comingUp
@@ -718,7 +796,7 @@ struct RecordingLibraryView: View {
             Button {
                 copyMeeting(meeting)
             } label: {
-                Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                Label(copied ? "Copied all" : "Copy all", systemImage: copied ? "checkmark" : "doc.on.doc")
             }
             .buttonStyle(LibraryButtonStyle(prominent: false))
         }
@@ -830,7 +908,11 @@ struct RecordingLibraryView: View {
     private func summaryContent(_ meeting: MeetingRecord) -> some View {
         let insights = meeting.insights
         if !insights.participants.isEmpty {
-            MeetingSection(title: "Participants", icon: "person.2.fill") {
+            MeetingSection(
+                title: "Participants",
+                icon: "person.2.fill",
+                copyText: MeetingClipboardText.participants(for: meeting)
+            ) {
                 FlowLayout(spacing: 6) {
                     ForEach(insights.participants, id: \.self) { participant in
                         Text(participant)
@@ -845,24 +927,41 @@ struct RecordingLibraryView: View {
             }
         }
 
-        MeetingSection(title: "AI Notes", icon: "sparkles") {
-            if !insights.aiNotes.isEmpty {
-                MarkdownNotesView(markdown: insights.aiNotes, textColor: primary, secondaryColor: secondary)
-            } else if !insights.summary.isEmpty {
-                // Meetings analyzed before AI Notes existed only carry a summary.
+        if !insights.summary.isEmpty {
+            MeetingSection(
+                title: "Summary",
+                icon: "text.alignleft",
+                copyText: MeetingClipboardText.summary(for: meeting)
+            ) {
                 Text(insights.summary)
                     .font(.system(size: 12))
                     .foregroundColor(primary.opacity(0.82))
                     .lineSpacing(3)
                     .textSelection(.enabled)
-            } else {
+            }
+        }
+
+        if !insights.aiNotes.isEmpty {
+            MeetingSection(
+                title: "AI Notes",
+                icon: "sparkles",
+                copyText: MeetingClipboardText.aiNotes(for: meeting)
+            ) {
+                MarkdownNotesView(markdown: insights.aiNotes, textColor: primary, secondaryColor: secondary)
+            }
+        } else if insights.summary.isEmpty {
+            MeetingSection(title: "AI Notes", icon: "sparkles") {
                 Text("OpenRec could not generate notes for this call.")
                     .font(.system(size: 12))
                     .foregroundColor(secondary)
             }
         }
 
-        MeetingSection(title: "Next steps", icon: "arrow.up.right.circle.fill") {
+        MeetingSection(
+            title: "Next steps",
+            icon: "arrow.up.right.circle.fill",
+            copyText: MeetingClipboardText.nextSteps(for: meeting)
+        ) {
             if insights.actionItems.isEmpty {
                 Text("No concrete next steps were detected.")
                     .font(.system(size: 12))
@@ -889,7 +988,11 @@ struct RecordingLibraryView: View {
             }
         }
 
-        MeetingSection(title: "Decisions", icon: "checkmark.seal.fill") {
+        MeetingSection(
+            title: "Decisions",
+            icon: "checkmark.seal.fill",
+            copyText: MeetingClipboardText.decisions(for: meeting)
+        ) {
             if insights.decisions.isEmpty {
                 Text("No explicit decisions were detected.")
                     .font(.system(size: 12))
@@ -907,7 +1010,11 @@ struct RecordingLibraryView: View {
     }
 
     private func transcriptContent(_ meeting: MeetingRecord) -> some View {
-        MeetingSection(title: "Transcript", icon: "text.quote") {
+        MeetingSection(
+            title: "Transcript",
+            icon: "text.quote",
+            copyText: MeetingClipboardText.transcript(for: meeting)
+        ) {
             if let transcript = meeting.transcript, !transcript.isEmpty {
                 Text(transcript)
                     .font(.system(size: 12))
@@ -1064,17 +1171,8 @@ struct RecordingLibraryView: View {
     }
 
     private func copyMeeting(_ meeting: MeetingRecord) {
-        var sections = [meeting.title]
-        if !meeting.insights.participants.isEmpty { sections.append("Participants: " + meeting.insights.participants.joined(separator: ", ")) }
-        if !meeting.insights.aiNotes.isEmpty { sections.append(meeting.insights.aiNotes) }
-        else if !meeting.insights.summary.isEmpty { sections.append(meeting.insights.summary) }
-        if !meeting.insights.actionItems.isEmpty {
-            sections.append("Next steps\n" + meeting.insights.actionItems.map { "• " + ($0.owner.isEmpty ? $0.task : "\($0.owner): \($0.task)") }.joined(separator: "\n"))
-        }
-        if !meeting.insights.decisions.isEmpty { sections.append("Decisions\n" + meeting.insights.decisions.map { "• \($0)" }.joined(separator: "\n")) }
-        if let transcript = meeting.transcript, !transcript.isEmpty { sections.append("Transcript\n\(transcript)") }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(sections.joined(separator: "\n\n"), forType: .string)
+        NSPasteboard.general.setString(MeetingClipboardText.meeting(meeting), forType: .string)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
     }
@@ -1296,20 +1394,49 @@ private struct MeetingRow: View {
 private struct MeetingSection<Content: View>: View {
     let title: String
     let icon: String
+    let copyText: String?
     let content: Content
+    @State private var copied = false
+    @State private var copyFeedbackGeneration = 0
 
-    init(title: String, icon: String, @ViewBuilder content: () -> Content) {
+    init(title: String, icon: String, copyText: String? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
         self.icon = icon
+        self.copyText = copyText
         self.content = content()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Color.white.opacity(0.54))
-                .textCase(.uppercase)
+            HStack(spacing: 10) {
+                Label(title, systemImage: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.54))
+                    .textCase(.uppercase)
+                Spacer()
+                if let copyText {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(copyText, forType: .string)
+                        copyFeedbackGeneration &+= 1
+                        let generation = copyFeedbackGeneration
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                            if copyFeedbackGeneration == generation { copied = false }
+                        }
+                    } label: {
+                        Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Color.white.opacity(copied ? 0.78 : 0.5))
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
+                            .background(Color.white.opacity(copied ? 0.1 : 0.06))
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(LibraryPressStyle())
+                    .help("Copy \(title.lowercased())")
+                }
+            }
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)

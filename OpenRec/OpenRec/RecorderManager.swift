@@ -110,6 +110,27 @@ private struct LegacyRecordingArtifacts {
     let audioURL: URL?
 }
 
+enum ReadyUpdateInstallation {
+    /// Prefer the embedded updater, which can replace and relaunch the app.
+    /// Opening the DMG remains a compatibility fallback for builds that do
+    /// not embed an updater framework.
+    @discardableResult
+    static func perform(
+        managedInstaller: (() -> Void)?,
+        dmgURL: URL,
+        openDMG: (URL) -> Void,
+        terminate: () -> Void
+    ) -> Bool {
+        if let managedInstaller {
+            managedInstaller()
+            return true
+        }
+        openDMG(dmgURL)
+        terminate()
+        return false
+    }
+}
+
 @MainActor
 final class RecorderManager: ObservableObject {
     @Published var isRecording = false
@@ -153,6 +174,8 @@ final class RecorderManager: ObservableObject {
     let webhookSettings = WebhookSettings()
     private let calendarSuggester = CalendarMeetingSuggester()
     private var lastSuggestedMeetingName: String?
+    private var upcomingEventsRefreshTask: Task<Void, Never>?
+    private var upcomingEventsRefreshGeneration = 0
 
     private var recorder: ScreenRecorder?
     private var mediaStreamingSession: MediaStreamingSession?
@@ -184,6 +207,7 @@ final class RecorderManager: ObservableObject {
 
     var onRecordingStateChange: ((Bool) -> Void)?
     var onProcessingComplete: (() -> Void)?
+    var onInstallReadyUpdate: (() -> Void)?
 
     private let lastClientNameKey = "LastClientName"
     private let showBorderKey = "ShowRecordingBorder"
@@ -250,18 +274,22 @@ final class RecorderManager: ObservableObject {
 
     /// Load ongoing/upcoming calendar events for the Meetings window's
     /// "Coming up" list, merging the connected Google Calendar (managed cloud)
-    /// with the Mac's local calendars.
+    /// with the Mac's local calendars. A newer request supersedes an older one,
+    /// so activation, timer, and manual refreshes can never publish stale data.
     func refreshUpcomingEvents(withinDays days: Int = 7) {
-        guard !isLoadingUpcomingEvents else { return }
+        upcomingEventsRefreshTask?.cancel()
+        upcomingEventsRefreshGeneration &+= 1
+        let generation = upcomingEventsRefreshGeneration
         isLoadingUpcomingEvents = true
-        Task { [weak self] in
+        upcomingEventsRefreshTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.isLoadingUpcomingEvents = false }
             async let cloudEvents = self.cloudStorage.upcomingCalendarEvents(withinDays: days)
             async let localEvents = self.calendarSuggester.upcomingEvents(withinDays: days)
             let cloud = await cloudEvents
+            let local = await localEvents
+            guard !Task.isCancelled, generation == self.upcomingEventsRefreshGeneration else { return }
             self.googleCalendarActive = cloud != nil
-            let merged = (cloud ?? []) + (await localEvents)
+            let merged = (cloud ?? []) + local
             // The same meeting often exists in both sources; treat identical
             // title + start minute as one event.
             var seen = Set<String>()
@@ -271,17 +299,25 @@ final class RecorderManager: ObservableObject {
                     let key = "\(event.title.lowercased())|\(Int(event.start.timeIntervalSince1970 / 60))"
                     return seen.insert(key).inserted
                 }
+            self.isLoadingUpcomingEvents = false
+            self.upcomingEventsRefreshTask = nil
         }
     }
 
-    /// Open the downloaded update and quit so the user can drag the new
-    /// version into place.
+    /// Install with the embedded updater when available. Legacy builds fall
+    /// back to opening the downloaded DMG and quitting.
     func installReadyUpdate() {
         guard let readyUpdate else { return }
-        NSWorkspace.shared.open(readyUpdate.localURL)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            NSApp.terminate(nil)
-        }
+        ReadyUpdateInstallation.perform(
+            managedInstaller: onInstallReadyUpdate,
+            dmgURL: readyUpdate.localURL,
+            openDMG: { NSWorkspace.shared.open($0) },
+            terminate: {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    NSApp.terminate(nil)
+                }
+            }
+        )
     }
 
     /// Prompt for access to the Mac's calendars (onboarding's optional step).

@@ -7,8 +7,10 @@ It exists because these exact mistakes have already been made once.
 
 - **The Cloudflare Worker in `cloud/` is the only backend.** It owns Google
   OAuth (sign-in AND calendar connections), sessions, the D1 database, R2
-  media, and the calendar endpoints. Deployed as `openrec-cloud`
-  (`https://openrec-cloud.qstar0.workers.dev`) via `cd cloud && npm run deploy`.
+  media, and the calendar endpoints. Deployed as `openrec-cloud` at
+  `https://api.openrec.co` via `cd cloud && npm run deploy`. The legacy
+  `https://openrec-cloud.qstar0.workers.dev` host stays enabled for shipped
+  builds.
 - **openrec.co on Vercel is the marketing site only** (`web/`). Do NOT route
   auth or API traffic through Vercel — the OAuth callback must live on exactly
   one host, secrets live in the Worker, and the data (D1/R2) is on Cloudflare.
@@ -20,9 +22,10 @@ It exists because these exact mistakes have already been made once.
   Declaring any route silently disables the `workers.dev` subdomain on the
   next deploy — and every shipped app build calls
   `openrec-cloud.qstar0.workers.dev` directly, so that is a full production
-  outage (this happened on 2026-08-13; the Meetings sidebar filled with a
+  outage for older builds (this happened on 2026-08-13; the Meetings sidebar filled with a
   Cloudflare 404 for every user). After ANY worker deploy, smoke-check:
-  `curl -s -o /dev/null -w "%{http_code} %{content_type}" https://openrec-cloud.qstar0.workers.dev/v1/meetings`
+  `curl -s -o /dev/null -w "%{http_code} %{content_type}" https://api.openrec.co/v1/meetings`
+  and the same command for `https://openrec-cloud.qstar0.workers.dev/v1/meetings`
   must print `401 application/json` (the worker's auth error) — a `404
   text/plain` means the platform, not the worker, answered.
 - **Google identity vs. calendar access are separate grants.** Sign-in

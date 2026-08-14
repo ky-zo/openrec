@@ -23,6 +23,21 @@ final class MeetingModelsTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testAppVersionPresentationIncludesMarketingVersionAndBuild() {
+        XCTAssertEqual(
+            AppVersionPresentation.label(infoDictionary: [
+                "CFBundleShortVersionString": "0.3.2",
+                "CFBundleVersion": "19",
+            ]),
+            "v0.3.2 (19)"
+        )
+        XCTAssertEqual(
+            AppVersionPresentation.label(infoDictionary: ["CFBundleShortVersionString": "0.3.2"]),
+            "v0.3.2"
+        )
+        XCTAssertEqual(AppVersionPresentation.label(infoDictionary: [:]), "dev build")
+    }
+
     func testMeetingRecordJSONRoundTripPreservesLibraryState() throws {
         var record = makeRecord(
             transcript: "[Me] We should ship this.\n[Others] Agreed.",
@@ -244,6 +259,59 @@ final class MeetingModelsTests: XCTestCase {
             MeetingLibraryPresentation.emptyTranscriptMessage(for: enabled),
             "Transcript storage was enabled, but no transcript is available for this meeting."
         )
+    }
+
+    func testMeetingClipboardTextProvidesEachVisibleSectionAndCopyAll() {
+        var meeting = makeRecord(transcript: "[Kamil] Ship it.\n[Alex] Agreed.")
+        meeting.insights.aiNotes = "## Highlights\n- Release is ready."
+
+        XCTAssertEqual(MeetingClipboardText.participants(for: meeting), "Kamil, Alex")
+        XCTAssertEqual(MeetingClipboardText.summary(for: meeting), "The team agreed on the next release.")
+        XCTAssertEqual(MeetingClipboardText.aiNotes(for: meeting), "## Highlights\n- Release is ready.")
+        XCTAssertEqual(
+            MeetingClipboardText.nextSteps(for: meeting),
+            "• Kamil: Ship the release — 2026-08-12"
+        )
+        XCTAssertEqual(MeetingClipboardText.decisions(for: meeting), "• Release on Wednesday")
+        XCTAssertEqual(MeetingClipboardText.transcript(for: meeting), "[Kamil] Ship it.\n[Alex] Agreed.")
+        XCTAssertEqual(
+            MeetingClipboardText.meeting(meeting),
+            """
+            Product review
+
+            Participants
+            Kamil, Alex
+
+            Summary
+            The team agreed on the next release.
+
+            AI Notes
+            ## Highlights
+            - Release is ready.
+
+            Next steps
+            • Kamil: Ship the release — 2026-08-12
+
+            Decisions
+            • Release on Wednesday
+
+            Transcript
+            [Kamil] Ship it.
+            [Alex] Agreed.
+            """
+        )
+    }
+
+    func testMeetingClipboardTextOmitsEmptySections() {
+        var meeting = makeRecord(transcript: "  \n")
+        meeting.insights.summary = ""
+        meeting.insights.aiNotes = ""
+        meeting.insights.participants = []
+        meeting.insights.actionItems = []
+        meeting.insights.decisions = []
+
+        XCTAssertNil(MeetingClipboardText.transcript(for: meeting))
+        XCTAssertEqual(MeetingClipboardText.meeting(meeting), "Product review")
     }
 
     func testManagedSignOutStubScrubsPrivateMeetingMemoryButKeepsRecoveryLink() {

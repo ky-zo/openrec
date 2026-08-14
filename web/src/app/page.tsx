@@ -481,8 +481,9 @@ export default function Page() {
           </h1>
 
           <h2>
-            A macOS recorder that captures the call, transcribes it, and
-            remembers what was decided — without adding a bot to the meeting.
+            OpenRec is a macOS recorder that captures the call, transcribes it,
+            and remembers what was decided — without adding a bot to the
+            meeting.
           </h2>
 
           <Waveform />
@@ -555,6 +556,8 @@ export default function Page() {
       </main>
 
       <footer className="footer">
+        <a href="/privacy">Privacy</a>
+        <span className="dot-sep">·</span>
         <a href={`${REPO_URL}/blob/main/LICENSE`}>MIT License</a>
         <span className="dot-sep">·</span>
         <a href={`${REPO_URL}/blob/main/CONTRIBUTING.md`}>Contribute</a>

@@ -7,7 +7,7 @@ The managed storage service is a Cloudflare Worker backed by D1 for meeting memo
 1. Create a D1 database and private R2 bucket, then replace the IDs/names in `wrangler.toml`.
 2. Create a Google OAuth web client, enable the Google Calendar API, and add this redirect URI:
 
-   `https://openrec-cloud.qstar0.workers.dev/v1/auth/google/callback`
+   `https://api.openrec.co/v1/auth/google/callback`
 
 3. Configure Worker secrets:
 
@@ -33,7 +33,9 @@ npm run db:migrate:media
 
 ## Authentication
 
-The OAuth flow requests `calendar.readonly` so meeting titles and attendees can be matched without editing calendar data.
+Google sign-in requests identity scopes only. Calendar connections are a
+separate, additive OAuth grant that requests `calendar.readonly`, so meeting
+titles and attendees can be matched without editing calendar data.
 
 1. Start sign-in with `GET /v1/auth/google/start?redirect_uri=<app-callback>`. The only accepted app callbacks are `openrec://auth` and `openrec-dev://auth`.
 2. Google returns to the configured Worker callback, `/v1/auth/google/callback`, which redirects to the requested app callback with a short-lived one-time code.

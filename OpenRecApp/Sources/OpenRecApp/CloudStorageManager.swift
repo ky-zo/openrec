@@ -60,6 +60,9 @@ enum ManagedSignOutPrivacy {
 
 @MainActor
 final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
+    private static let canonicalManagedAPIBaseURL = "https://api.openrec.co"
+    private static let legacyManagedAPIBaseURL = "https://openrec-cloud.qstar0.workers.dev"
+
     struct CalendarCallContext {
         let title: String
         let participants: [String]
@@ -82,7 +85,12 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
     @Published var libraryError: String?
 
     var managedAPIBaseURL: String {
-        get { UserDefaults.standard.string(forKey: "ManagedAPIBaseURL") ?? "https://openrec-cloud.qstar0.workers.dev" }
+        get {
+            let stored = UserDefaults.standard.string(forKey: "ManagedAPIBaseURL")
+            return stored == Self.legacyManagedAPIBaseURL
+                ? Self.canonicalManagedAPIBaseURL
+                : stored ?? Self.canonicalManagedAPIBaseURL
+        }
         set { UserDefaults.standard.set(newValue, forKey: "ManagedAPIBaseURL"); objectWillChange.send() }
     }
     var r2AccountID: String {
@@ -513,6 +521,7 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
               let token = context.managedToken,
               !token.isEmpty else { return nil }
         var request = URLRequest(url: base.appendingPathComponent("v1/calendar/current"))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 15
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -542,6 +551,7 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
         components?.queryItems = [URLQueryItem(name: "days", value: String(days))]
         guard let url = components?.url else { return nil }
         var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 15
         guard let (data, response) = try? await URLSession.shared.data(for: request),
