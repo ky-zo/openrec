@@ -2,7 +2,12 @@ import Foundation
 
 enum AssemblyAIConfiguration {
     static let batchModel = "universal-3-5-pro"
+    // AssemblyAI serves universal-2 when language detection lands outside the
+    // universal-3-5-pro language set; requesting both models opts into that fallback.
+    static let fallbackModel = "universal-2"
+    static let acceptedBatchModels: Set<String> = [batchModel, fallbackModel]
     static let realtimeModel = "universal-3-5-pro"
+    static let acceptedRealtimeModels: Set<String> = [realtimeModel, fallbackModel]
     static let defaultPollInterval: TimeInterval = 3
     static let defaultPollTimeout: TimeInterval = 30 * 60
     static let realtimeSampleRate = 16_000
@@ -16,7 +21,7 @@ struct AssemblyAITranscriptRequestBody: Codable, Equatable {
 
     init(
         audioURL: String,
-        speechModels: [String] = [AssemblyAIConfiguration.batchModel],
+        speechModels: [String] = [AssemblyAIConfiguration.batchModel, AssemblyAIConfiguration.fallbackModel],
         speakerLabels: Bool = true,
         languageDetection: Bool = true
     ) {
@@ -146,7 +151,8 @@ enum AssemblyAITranscriptMapper {
         guard response.status == .completed else {
             throw OpenRecError.invalidResponse("AssemblyAI returned a transcript before it was complete.")
         }
-        guard response.speechModelUsed == AssemblyAIConfiguration.batchModel else {
+        guard let modelUsed = response.speechModelUsed,
+              AssemblyAIConfiguration.acceptedBatchModels.contains(modelUsed) else {
             let actual = response.speechModelUsed ?? "unknown"
             throw OpenRecError.invalidResponse(
                 "AssemblyAI used \(actual) instead of \(AssemblyAIConfiguration.batchModel)."
@@ -511,7 +517,7 @@ final class AssemblyAIRealtimeTranscriber: NSObject, URLSessionWebSocketDelegate
         case "Begin":
             let configuration = json["configuration"] as? [String: Any]
             if let model = configuration?["model"] as? String,
-               model != AssemblyAIConfiguration.realtimeModel {
+               !AssemblyAIConfiguration.acceptedRealtimeModels.contains(model) {
                 delegate?.realtimeTranscriptionDidFail(
                     OpenRecError.invalidResponse(
                         "AssemblyAI opened \(model) instead of \(AssemblyAIConfiguration.realtimeModel)."

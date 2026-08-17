@@ -103,13 +103,25 @@ enum AssemblyAITestFixtures {
         """
     )
 
-    static let completedWrongModel = data(
+    static let completedFallbackModel = data(
         """
         {
           "id": "\(transcriptID)",
           "status": "completed",
           "speech_model_used": "universal-2",
           "text": "Fallback transcript",
+          "utterances": []
+        }
+        """
+    )
+
+    static let completedWrongModel = data(
+        """
+        {
+          "id": "\(transcriptID)",
+          "status": "completed",
+          "speech_model_used": "nano",
+          "text": "Unexpected model transcript",
           "utterances": []
         }
         """

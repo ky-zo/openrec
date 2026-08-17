@@ -44,7 +44,7 @@ final class AssemblyAIServiceTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "assembly-secret")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
         XCTAssertEqual(decoded.audioURL, AssemblyAITestFixtures.uploadURL)
-        XCTAssertEqual(decoded.speechModels, ["universal-3-5-pro"])
+        XCTAssertEqual(decoded.speechModels, ["universal-3-5-pro", "universal-2"])
         XCTAssertTrue(decoded.speakerLabels)
         XCTAssertTrue(decoded.languageDetection)
     }
@@ -135,6 +135,19 @@ final class AssemblyAIServiceTests: XCTestCase {
         XCTAssertEqual(segments[0].timestamp, 0)
     }
 
+    func testMapperAcceptsUniversal2FallbackTranscript() throws {
+        let fallback = try JSONDecoder().decode(
+            AssemblyAITranscriptResponse.self,
+            from: AssemblyAITestFixtures.completedFallbackModel
+        )
+
+        let segments = try AssemblyAITranscriptMapper.displaySegments(from: fallback)
+
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].speakerLabel, "Conversation")
+        XCTAssertEqual(segments[0].text, "Fallback transcript")
+    }
+
     func testMapperRejectsWrongModelAndEmptyTranscript() throws {
         let wrongModel = try JSONDecoder().decode(
             AssemblyAITranscriptResponse.self,
@@ -146,7 +159,7 @@ final class AssemblyAIServiceTests: XCTestCase {
         )
 
         XCTAssertThrowsError(try AssemblyAITranscriptMapper.displaySegments(from: wrongModel)) { error in
-            XCTAssertTrue(error.localizedDescription.contains("universal-2 instead of universal-3-5-pro"))
+            XCTAssertTrue(error.localizedDescription.contains("nano instead of universal-3-5-pro"))
         }
         XCTAssertThrowsError(try AssemblyAITranscriptMapper.displaySegments(from: empty)) { error in
             guard case OpenRecError.noSpeechDetected(let message) = error else {
