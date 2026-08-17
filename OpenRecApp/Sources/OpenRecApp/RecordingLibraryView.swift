@@ -778,7 +778,7 @@ struct RecordingLibraryView: View {
             }
             Spacer()
             if meeting.saveStatus == .failed, recovery.canRetry {
-                Button("Retry save") { recorderManager.retryFailedMeeting(meeting) }
+                Button("Retry processing") { recorderManager.retryFailedMeeting(meeting) }
                     .buttonStyle(LibraryButtonStyle(prominent: false))
                     .disabled(recorderManager.isRecording || recorderManager.isProcessing || recorderManager.isStarting)
                     .help(
@@ -807,6 +807,13 @@ struct RecordingLibraryView: View {
     private func detailContent(_ meeting: MeetingRecord) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                if meeting.saveStatus == .processing {
+                    StatusBanner(
+                        message: "Processing this meeting: \(meeting.saveStage.label)…",
+                        icon: "arrow.triangle.2.circlepath",
+                        color: .blue
+                    )
+                }
                 if let error = detailError ?? meeting.errorMessage {
                     StatusBanner(message: error, icon: "exclamationmark.triangle.fill", color: .orange)
                 }

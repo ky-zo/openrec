@@ -1019,13 +1019,16 @@ final class RecorderManager: ObservableObject {
     /// a later processing stage failed. No local media file is required.
     private func processRecoveredCloudMeeting(_ record: MeetingRecord) async {
         guard let storageContext = pendingStorageContext else {
-            failSaving("The cloud recording context is unavailable.", markMeetingFailed: false)
+            var meeting = record
+            meeting.errorMessage = "The cloud recording context is unavailable."
+            meeting.updatedAt = Date()
+            try? cloudStorage.upsertLocalMeeting(meeting)
+            finishRecoveredProcessing(savedMeetingID: nil)
             return
         }
         var meeting = record
         var warnings: [String] = []
         do {
-            savePhase = .transcribing
             meeting.saveStatus = .processing
             meeting.saveStage = .transcribing
             meeting.errorMessage = nil
@@ -1067,7 +1070,6 @@ final class RecorderManager: ObservableObject {
             )
             meeting.transcript = meeting.preferences.storeTranscriptInCloud ? transcript : nil
 
-            savePhase = .analyzing
             meeting.saveStage = .analyzing
             meeting.updatedAt = Date()
             try cloudStorage.upsertLocalMeeting(meeting)
@@ -1115,7 +1117,6 @@ final class RecorderManager: ObservableObject {
 
             var preserveWebhookRecovery = false
             if meeting.preferences.sendToWebhook && meeting.webhookDeliveryStatus != .delivered {
-                savePhase = .deliveringWebhook
                 meeting.saveStage = .deliveringWebhook
                 meeting.webhookDeliveryStatus = .pending
                 meeting.webhookErrorMessage = nil
@@ -1184,7 +1185,6 @@ final class RecorderManager: ObservableObject {
                 }
             }
 
-            savePhase = .cleaningUp
             meeting.saveStage = .cleaningUp
             meeting.updatedAt = Date()
             try cloudStorage.upsertLocalMeeting(meeting)
@@ -1233,20 +1233,38 @@ final class RecorderManager: ObservableObject {
             )
             meeting.saveStatus = .saved
             meeting.saveStage = .complete
-            meeting.errorMessage = nil
+            let distinctWarnings = warnings.reduce(into: [String]()) { result, value in
+                if !result.contains(value) { result.append(value) }
+            }
+            meeting.errorMessage = distinctWarnings.isEmpty ? nil : distinctWarnings.joined(separator: "\n")
             meeting.localScreenPath = nil
             meeting.localAudioPath = nil
             meeting.updatedAt = Date()
             try cloudStorage.upsertLocalMeeting(meeting)
             scheduleDeferredMediaCleanup(for: meeting)
-            finishSuccessfulSave(meetingID: meeting.id, warnings: warnings)
+            finishRecoveredProcessing(savedMeetingID: meeting.id)
         } catch {
             meeting.saveStatus = .failed
             meeting.errorMessage = "Cloud recovery stopped: \(error.localizedDescription)"
             meeting.updatedAt = Date()
             try? cloudStorage.upsertLocalMeeting(meeting)
-            failSaving(meeting.errorMessage ?? error.localizedDescription, markMeetingFailed: false)
+            finishRecoveredProcessing(savedMeetingID: nil)
         }
+    }
+
+    // Recovery of an already-recorded meeting reports progress and warnings on
+    // the meeting record (shown in the Meetings window), never on the recorder
+    // panel's savePhase.
+    private func finishRecoveredProcessing(savedMeetingID: UUID?) {
+        isProcessing = false
+        if let savedMeetingID { lastSavedMeetingID = savedMeetingID }
+        pendingMeetingID = nil
+        pendingStartedAt = nil
+        pendingEndedAt = nil
+        pendingManualTitle = nil
+        pendingStorageContext = nil
+        detectedCall = nil
+        onProcessingComplete?()
     }
 
     private func analyzeRecoveredTranscript(

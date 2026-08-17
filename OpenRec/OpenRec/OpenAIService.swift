@@ -30,7 +30,9 @@ struct OpenAIService {
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 60
+        // gpt-5-mini reasons before answering and long calls produce large
+        // structured notes; a full response can take several minutes.
+        request.timeoutInterval = 300
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 

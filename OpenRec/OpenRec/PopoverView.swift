@@ -145,7 +145,10 @@ struct PopoverContentView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
             }
-            .frame(height: recorderManager.lastErrorMessage == nil ? 112 : 142)
+            // minHeight, not a fixed height: the saved state adds a "View
+            // meeting" button that must push the fields below it down instead
+            // of overflowing onto them.
+            .frame(minHeight: recorderManager.lastErrorMessage == nil ? 112 : 142)
 
             Spacer(minLength: 0)
 
