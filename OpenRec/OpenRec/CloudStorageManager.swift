@@ -1319,11 +1319,39 @@ final class CloudStorageManager: NSObject, ObservableObject, ASWebAuthentication
             if completed, let delete = try? signer.signedDeleteRequest(objectKey: objectKey) {
                 _ = try? await URLSession.shared.data(for: delete)
             }
-            throw error
+            throw Self.describeR2ConnectionError(error)
         }
         let deleteRequest = try signer.signedDeleteRequest(objectKey: objectKey)
         let (data, response) = try await URLSession.shared.data(for: deleteRequest)
         try validate(response: response, data: data)
+    }
+
+    /// Cloudflare rejects the TLS handshake outright (SNI failure) when the
+    /// subdomain isn't a real account ID, so a mistyped Account ID surfaces as
+    /// an opaque "TLS error" instead of a 403/404. Translate it.
+    static func describeR2ConnectionError(_ error: Error) -> Error {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return error }
+        let tlsCodes: Set<Int> = [
+            NSURLErrorSecureConnectionFailed,
+            NSURLErrorServerCertificateHasBadDate,
+            NSURLErrorServerCertificateUntrusted,
+            NSURLErrorServerCertificateHasUnknownRoot,
+            NSURLErrorServerCertificateNotYetValid,
+            NSURLErrorClientCertificateRejected,
+            NSURLErrorClientCertificateRequired
+        ]
+        if tlsCodes.contains(nsError.code) {
+            return OpenRecError.invalidConfiguration(
+                "Couldn't open a secure connection to your R2 endpoint. Double-check the Account ID — it's the 32-character ID shown on the Cloudflare R2 overview page, not the Access Key ID or a token ID. If it's correct, a VPN or proxy may be intercepting TLS."
+            )
+        }
+        if nsError.code == NSURLErrorCannotFindHost {
+            return OpenRecError.invalidConfiguration(
+                "Couldn't resolve your R2 endpoint. Check the Account ID and your network connection."
+            )
+        }
+        return error
     }
 
     private var meetingsDirectory: URL {
